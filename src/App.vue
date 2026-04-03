@@ -31,11 +31,13 @@ const scanReading = async () => {
   // Set canvas to video size and draw current frame
   canvas.value.width = video.value.videoWidth
   canvas.value.height = video.value.videoHeight
+  context.filter = 'grayscale(100%) contrast(200%) brightness(120%)';
   context.drawImage(video.value, 0, 0)
 
   // Run OCR
   const { data: { text } } = await Tesseract.recognize(canvas.value, 'eng', {
-    tessedit_char_whitelist: '0123456789' // Only look for numbers
+    tessedit_char_whitelist: '0123456789', // Only look for numbers
+    tessedit_pageseg_mode: '6'
   })
 
   // Basic parsing for Omron M3 (SYS, DIA, PULSE)
