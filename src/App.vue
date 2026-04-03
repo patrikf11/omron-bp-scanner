@@ -35,15 +35,15 @@ const scanReading = async () => {
   // 1. Shrink the Window (Top 25%, Height 50%, Sides 15%)
   const w = v.videoWidth;
   const h = v.videoHeight;
-  const scanX = w * 0.15;
+  const scanX = w * 0.25;
   const scanY = h * 0.25; // Lowered from 20% to 25%
-  const scanW = w * 0.70;
+  const scanW = w * 0.50;
   const scanH = h * 0.50; // Shrunk from 60% to 50% for tighter focus
 
   // 2. Proportions: 35/35/30
-  const sysH = scanH * 0.35;
-  const diaH = scanH * 0.35;
-  const pulseH = scanH * 0.30;
+  const sysH = scanH * 0.37;
+  const diaH = scanH * 0.38;
+  const pulseH = scanH * 0.25;
 
   // 3. Prepare Preview (High Contrast)
   canvas.width = scanW;
@@ -102,83 +102,6 @@ const scanReading = async () => {
   }
 };
 
-
-// 2. The OCR Logic
-const scanReadingOld = async () => {
-  isScanning.value = true
-  status.value = "Scanning zones..."
-  
-  const v = video.value
-  const canvas = previewCanvas.value
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
-
-  // Define Window (Match CSS: Top 20%, Left 15%, Width 70%, Height 60%)
-  const w = v.videoWidth
-  const h = v.videoHeight
-  const scanX = w * 0.15
-  const scanY = h * 0.20
-  const scanW = w * 0.70
-  const scanH = h * 0.60
-  const zoneH = scanH / 3
-  // new zone 
-  const sysH = scanH * 0.40;
-  const diaH = scanH * 0.40;
-  const pulseH = scanH * 0.20;
-
-  // Prepare Preview Canvas
-  canvas.width = scanW
-  canvas.height = scanH
-  ctx.filter = 'grayscale(100%) contrast(500%) brightness(80%) blur(0.5px)'
-  ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, scanW, scanH)
-
-  // Helper to scan a specific 1/3 of the cropped area
-  const getZoneText = async (index) => {
-    const tempCanvas = document.createElement('canvas')
-    const scale = 2;
-    tempCanvas.width = scanW * scale;
-    tempCanvas.height = zoneH * scale;
-    const tempCtx = tempCanvas.getContext('2d')
-    tempCtx.imageSmoothingEnabled = true;
-    tempCtx.imageSmoothingQuality = 'high';
-
-    tempCtx.drawImage(canvas, 0, index * zoneH, scanW, zoneH, 0, 0, scanW, zoneH)
-    tempCtx.drawImage(canvas, 0, yStart, scanW, height,          // Source from preview
-                              0, 0, tempCanvas.width, tempCanvas.height // Scaled destination
-     );
-
-    const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
-      tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '7',
-      tessjs_create_hocr: '0',
-      tessjs_create_tsv: '0'
-    })
-    
-    const match = text.replace(/\s/g, '').match(/\d+/);
-    if (match && match[0].length >= 2) {
-      // Only accept numbers that are 2 or 3 digits (standard for BP)
-      return match[0];
-    }
-    return null;
-  }
-
-  try {
-    const sys = await getZoneText(0)
-    const dia = await getZoneText(1)
-    const pulse = await getZoneText(2)
-
-    if (sys && dia) {
-      readings.value = { sys, dia, pulse: pulse || '?' }
-      status.value = "Scan successful!"
-      if (navigator.vibrate) navigator.vibrate(100)
-    } else {
-      status.value = "Could not read. Check alignment/glare."
-    }
-  } catch (err) {
-    status.value = "OCR Error: " + err.message
-  } finally {
-    isScanning.value = false
-  }
-}
 
 // 3. Send to ThingSpeak
 const saveToCloud = async () => {
@@ -241,8 +164,8 @@ video { width: 100%; display: block; }
   position: absolute;
   top: 25%;    /* Matches JS startY */
   bottom: 25%; /* Matches JS scanH */
-  left: 15%;
-  right: 15%;
+  left: 25%;
+  right: 25%;
   border: 3px solid #00ff00;
   box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.4);
   display: flex;
@@ -253,14 +176,13 @@ video { width: 100%; display: block; }
   flex: 1; border-bottom: 1px dashed rgba(0,255,0,0.4); 
   color: #00ff00; font-size: 10px; padding: 5px; text-align: right; 
 }
-.scan-divider:nth-child(1) { flex: 0.35; } /* SYS Gets 40% */
-.scan-divider:nth-child(2) { flex: 0.35; } /* DIA Gets 40% */
+.scan-divider:nth-child(1) { flex: 0.37; } /* SYS Gets 40% */
+.scan-divider:nth-child(2) { flex: 0.38; } /* DIA Gets 40% */
 .scan-divider:nth-child(3) { 
-  flex: 0.3; 
+  flex: 0.25; 
   border-bottom: none; 
   font-size: 8px; /* Smaller label for the smaller pulse area */
 }
-.scan-divider:last-child { border-bottom: none; }
 
 /* UI Elements */
 .status-text { font-weight: bold; margin: 15px 0; color: #3b82f6; height: 20px; }
