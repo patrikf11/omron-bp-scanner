@@ -48,23 +48,34 @@ const scanReading = async () => {
   // 3. Prepare Preview (High Contrast)
   canvas.width = scanW;
   canvas.height = scanH;
-  ctx.filter = 'grayscale(100%) contrast(400%) brightness(90%)';
+  ctx.filter = 'grayscale(100%) contrast(500%) brightness(80%) blur(0.5px)';
   ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, scanW, scanH);
 
   const getZoneText = async (yStart, height) => {
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = scanW;
-    tempCanvas.height = height;
+     // Scale up the zone by 2x to help Tesseract see shapes better
+    const scale = 2; 
+    tempCanvas.width = scanW * scale;
+    tempCanvas.height = height * scale;
+  
     const tempCtx = tempCanvas.getContext('2d');
-    
-    tempCtx.drawImage(canvas, 0, yStart, scanW, height, 0, 0, scanW, height);
+  
+    // Smooth the scaling for better OCR shapes
+    tempCtx.imageSmoothingEnabled = true;
+    tempCtx.imageSmoothingQuality = 'high';
+
+    tempCtx.drawImage(
+      canvas, 
+      0, yStart, scanW, height,          // Source from preview
+      0, 0, tempCanvas.width, tempCanvas.height // Scaled destination
+    );
 
     const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
       tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '7', 
+      tessedit_pageseg_mode: '7', // Treat as a single line
     });
-    const match = text.replace(/\D/g, '');
-    return match.length > 0 ? match : null;
+  
+    return text.replace(/\D/g, '');
   };
 
   try {
@@ -72,12 +83,17 @@ const scanReading = async () => {
     const diaResult = await getZoneText(sysH, diaH);
     const pulseResult = await getZoneText(sysH + diaH, pulseH);
 
+    // Validation & Mapping
     if (sysResult && diaResult) {
-      readings.value = { sys: sysResult, dia: diaResult, pulse: pulseResult || '?' };
+      readings.value = { 
+        sys: sysResult, 
+        dia: diaResult, 
+        pulse: pulseResult || '?' 
+      };
       status.value = "Scan successful!";
       if (navigator.vibrate) navigator.vibrate(100);
     } else {
-      status.value = "Incomplete scan. Adjust aim.";
+      status.value = "Partial scan. Check alignment/glare.";
     }
   } catch (err) {
     status.value = "OCR Error.";
@@ -112,16 +128,23 @@ const scanReadingOld = async () => {
   // Prepare Preview Canvas
   canvas.width = scanW
   canvas.height = scanH
-  ctx.filter = 'grayscale(100%) contrast(400%) brightness(90%) invert(0%)'
+  ctx.filter = 'grayscale(100%) contrast(500%) brightness(80%) blur(0.5px)'
   ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, scanW, scanH)
 
   // Helper to scan a specific 1/3 of the cropped area
   const getZoneText = async (index) => {
     const tempCanvas = document.createElement('canvas')
-    tempCanvas.width = scanW
-    tempCanvas.height = zoneH
+    const scale = 2;
+    tempCanvas.width = scanW * scale;
+    tempCanvas.height = zoneH * scale;
     const tempCtx = tempCanvas.getContext('2d')
+    tempCtx.imageSmoothingEnabled = true;
+    tempCtx.imageSmoothingQuality = 'high';
+
     tempCtx.drawImage(canvas, 0, index * zoneH, scanW, zoneH, 0, 0, scanW, zoneH)
+    tempCtx.drawImage(canvas, 0, yStart, scanW, height,          // Source from preview
+                              0, 0, tempCanvas.width, tempCanvas.height // Scaled destination
+     );
 
     const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
       tessedit_char_whitelist: '0123456789',
