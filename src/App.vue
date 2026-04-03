@@ -44,8 +44,23 @@ const scanReading = async () => {
   canvas.width = scanW * scale;
   canvas.height = scanH * scale;
   
-  ctx.filter = 'grayscale(100%) contrast(450%) brightness(85%) blur(0.5px)';
+  ctx.filter = 'grayscale(100%) contrast(500%) brightness(80%)';
   ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, canvas.width, canvas.height);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  // Simple Binarization & Threshold
+  for (let i = 0; i < data.length; i += 4) {
+    const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    const val = avg < 128 ? 0 : 255; // Threshold at 50%
+    data[i] = data[i+1] = data[i+2] = val;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  
+  // Apply a tiny blur + extra contrast to "dilate" and smooth edges
+  ctx.filter = 'blur(1px) contrast(300%)';
+  ctx.drawImage(canvas, 0, 0);
+
 
   try {
     // 3. Single OCR Pass on the whole window
