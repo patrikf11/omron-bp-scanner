@@ -26,83 +26,66 @@ onMounted(async () => {
 
 const scanReading = async () => {
   isScanning.value = true;
-  status.value = "Scanning zones (40/40/20)...";
+  status.value = "Scanning (35/35/30)...";
   
   const v = video.value;
   const canvas = previewCanvas.value;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-  // 1. Define Window (Match CSS: Top 20%, Left 15%, Width 70%, Height 60%)
+  // 1. Shrink the Window (Top 25%, Height 50%, Sides 15%)
   const w = v.videoWidth;
   const h = v.videoHeight;
   const scanX = w * 0.15;
-  const scanY = h * 0.20;
+  const scanY = h * 0.25; // Lowered from 20% to 25%
   const scanW = w * 0.70;
-  const scanH = h * 0.60;
+  const scanH = h * 0.50; // Shrunk from 60% to 50% for tighter focus
 
-  // 2. Define the Heights for the 40/40/20 split
-  const sysH = scanH * 0.40;   // Top 40%
-  const diaH = scanH * 0.40;   // Middle 40%
-  const pulseH = scanH * 0.20; // Bottom 20%
+  // 2. Proportions: 35/35/30
+  const sysH = scanH * 0.35;
+  const diaH = scanH * 0.35;
+  const pulseH = scanH * 0.30;
 
-  // 3. Prepare Preview Canvas (High Contrast)
+  // 3. Prepare Preview (High Contrast)
   canvas.width = scanW;
   canvas.height = scanH;
   ctx.filter = 'grayscale(100%) contrast(400%) brightness(90%)';
   ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, scanW, scanH);
 
-  // 4. Helper to scan each specific zone height
-  const getZoneText = async (yStart, height, label) => {
+  const getZoneText = async (yStart, height) => {
     const tempCanvas = document.createElement('canvas');
-    
-    // Scale up the smaller pulse digits by 1.5x for better OCR
-    const scale = (label === 'pulse') ? 1.5 : 1;
-    tempCanvas.width = scanW * scale;
-    tempCanvas.height = height * scale;
-    
+    tempCanvas.width = scanW;
+    tempCanvas.height = height;
     const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.drawImage(
-      canvas, 
-      0, yStart, scanW, height,          // Source from preview canvas
-      0, 0, tempCanvas.width, tempCanvas.height // Destination (scaled up)
-    );
+    
+    tempCtx.drawImage(canvas, 0, yStart, scanW, height, 0, 0, scanW, height);
 
     const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
       tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '7', // Single line mode
-      tessjs_create_hocr: '0',
-      tessjs_create_tsv: '0',
+      tessedit_pageseg_mode: '7', 
     });
-
-    // Clean text: keep only numbers
-    const cleanNum = text.replace(/\D/g, '');
-    return cleanNum.length > 0 ? cleanNum : null;
+    const match = text.replace(/\D/g, '');
+    return match.length > 0 ? match : null;
   };
 
   try {
-    // 5. Run OCR on the three specific areas
-    const sysResult = await getZoneText(0, sysH, 'sys');
-    const diaResult = await getZoneText(sysH, diaH, 'dia');
-    const pulseResult = await getZoneText(sysH + diaH, pulseH, 'pulse');
+    const sysResult = await getZoneText(0, sysH);
+    const diaResult = await getZoneText(sysH, diaH);
+    const pulseResult = await getZoneText(sysH + diaH, pulseH);
 
     if (sysResult && diaResult) {
-      readings.value = { 
-        sys: sysResult, 
-        dia: diaResult, 
-        pulse: pulseResult || '?' 
-      };
+      readings.value = { sys: sysResult, dia: diaResult, pulse: pulseResult || '?' };
       status.value = "Scan successful!";
       if (navigator.vibrate) navigator.vibrate(100);
     } else {
-      status.value = "Partial scan. Check alignment/glare.";
+      status.value = "Incomplete scan. Adjust aim.";
     }
   } catch (err) {
-    console.error(err);
-    status.value = "OCR Error. See console.";
+    status.value = "OCR Error.";
   } finally {
     isScanning.value = false;
   }
 };
+
 
 // 2. The OCR Logic
 const scanReadingOld = async () => {
@@ -233,19 +216,24 @@ video { width: 100%; display: block; }
 /* Target Box */
 .scan-window {
   position: absolute;
-  top: 20%; bottom: 20%; left: 15%; right: 15%;
+  top: 25%;    /* Matches JS startY */
+  bottom: 25%; /* Matches JS scanH */
+  left: 15%;
+  right: 15%;
   border: 3px solid #00ff00;
   box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.4);
-  display: flex; flex-direction: column; pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
 }
 .scan-divider { 
   flex: 1; border-bottom: 1px dashed rgba(0,255,0,0.4); 
   color: #00ff00; font-size: 10px; padding: 5px; text-align: right; 
 }
-.scan-divider:nth-child(1) { flex: 0.4; } /* SYS Gets 40% */
-.scan-divider:nth-child(2) { flex: 0.4; } /* DIA Gets 40% */
+.scan-divider:nth-child(1) { flex: 0.35; } /* SYS Gets 40% */
+.scan-divider:nth-child(2) { flex: 0.35; } /* DIA Gets 40% */
 .scan-divider:nth-child(3) { 
-  flex: 0.2; 
+  flex: 0.3; 
   border-bottom: none; 
   font-size: 8px; /* Smaller label for the smaller pulse area */
 }
