@@ -23,8 +23,59 @@ onMounted(async () => {
   }
 })
 
-
 const scanReading = async () => {
+  isScanning.value = true;
+  status.value = "Reading screen...";
+  
+  const v = video.value;
+  const canvas = previewCanvas.value;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  // 1. Keep your Narrow Window (50% Wide, 50% High)
+  const w = v.videoWidth;
+  const h = v.videoHeight;
+  const scanW = w * 0.50; 
+  const scanX = w * 0.25; 
+  const scanH = h * 0.50;
+  const scanY = h * 0.25;
+
+  // 2. Prepare the High-Res Canvas
+  const scale = 2;
+  canvas.width = scanW * scale;
+  canvas.height = scanH * scale;
+  
+  ctx.filter = 'grayscale(100%) contrast(450%) brightness(85%) blur(0.5px)';
+  ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, canvas.width, canvas.height);
+
+  try {
+    // 3. Single OCR Pass on the whole window
+    const { data: { text } } = await Tesseract.recognize(canvas, 'eng', {
+      tessedit_char_whitelist: '0123456789',
+      tessedit_pageseg_mode: '6' // Assume a single uniform block of text
+    });
+
+    // 4. Extract all numbers found in the text
+    const foundNumbers = text.match(/\d+/g);
+
+    if (foundNumbers && foundNumbers.length >= 2) {
+      readings.value = {
+        sys: foundNumbers[0],
+        dia: foundNumbers[1],
+        pulse: foundNumbers[2] || '?'
+      };
+      status.value = "Scan successful!";
+      if (navigator.vibrate) navigator.vibrate(100);
+    } else {
+      status.value = "Found " + (foundNumbers?.length || 0) + " numbers. Try again.";
+    }
+  } catch (err) {
+    status.value = "OCR Error.";
+  } finally {
+    isScanning.value = false;
+  }
+};
+
+const scanReadingold = async () => {
   isScanning.value = true;
   status.value = "Scanning (35/35/30)...";
   
@@ -129,9 +180,9 @@ const saveToCloud = async () => {
       <video ref="video" autoplay playsinline></video>
       <!-- Visual targeting guide -->
       <div class="scan-window">
-        <div class="scan-divider">SYS</div>
-        <div class="scan-divider">DIA</div>
-        <div class="scan-divider">PULSE</div>
+        <!-- div class="scan-divider">SYS</div -->
+        <!-- div class="scan-divider">DIA</div -->
+        <!-- div class="scan-divider">PULSE</div -->
       </div>
     </div>
     
@@ -159,8 +210,33 @@ const saveToCloud = async () => {
 .video-wrap { position: relative; width: 100%; border-radius: 15px; overflow: hidden; background: #000; }
 video { width: 100%; display: block; }
 
-/* Target Box */
 .scan-window {
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 25%;
+  right: 25%;
+  border: 3px solid #00ff00;
+  box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Optional: Add a simple hint text in the middle */
+.scan-window::after {
+  content: "ALIGN NUMBERS HERE";
+  color: #00ff00;
+  font-size: 10px;
+  font-weight: bold;
+  opacity: 0.5;
+}
+
+
+
+/* Target Box */
+.oscan-window {
   position: absolute;
   top: 25%;    /* Matches JS startY */
   bottom: 25%; /* Matches JS scanH */
@@ -172,13 +248,13 @@ video { width: 100%; display: block; }
   flex-direction: column;
   pointer-events: none;
 }
-.scan-divider { 
+.oscan-divider { 
   flex: 1; border-bottom: 1px dashed rgba(0,255,0,0.4); 
   color: #00ff00; font-size: 10px; padding: 5px; text-align: right; 
 }
-.scan-divider:nth-child(1) { flex: 0.37; } /* SYS Gets 40% */
-.scan-divider:nth-child(2) { flex: 0.38; } /* DIA Gets 40% */
-.scan-divider:nth-child(3) { 
+.oscan-divider:nth-child(1) { flex: 0.37; } /* SYS Gets 40% */
+.oscan-divider:nth-child(2) { flex: 0.38; } /* DIA Gets 40% */
+.oscan-divider:nth-child(3) { 
   flex: 0.25; 
   border-bottom: none; 
   font-size: 8px; /* Smaller label for the smaller pulse area */
