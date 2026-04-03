@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import Tesseract from 'tesseract.js'
 
-// --- CONFIGURATION ---
+// --- CONFIGURATION 
 const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY' // Change this!
 const THINGSPEAK_CHANNEL_ID = 'YOUR_CHANNEL_ID' // Change this!
 
