@@ -94,7 +94,11 @@ const saveToCloud = async () => {
     
     <div class="video-wrap">
       <video ref="video" autoplay playsinline></video>
-      <div class="overlay"></div>
+      <div class="overlay">
+        <div class="zone-box"><span class="zone-label">SYS</span></div>
+        <div class="zone-box"><span class="zone-label">DIA</span></div>
+        <div class="zone-box"><span class="zone-label">PULSE</span></div>
+      </div>
     </div>
     
     <div class="controls">
@@ -114,12 +118,52 @@ const saveToCloud = async () => {
 
 <style scoped>
 .app-container { font-family: sans-serif; text-align: center; padding: 20px; }
-.video-wrap { position: relative; width: 100%; max-width: 400px; margin: auto; border: 4px solid #333; }
-video { width: 100%; display: block; }
-.overlay { position: absolute; top: 20%; left: 10%; right: 10%; bottom: 20%; border: 2px dashed red; pointer-events: none; }
+
 .controls { margin-top: 20px; }
 button { padding: 15px 30px; font-size: 1.1rem; cursor: pointer; border-radius: 8px; border: none; margin: 5px; }
 .btn-scan { background: #3b82f6; color: white; }
 .btn-save { background: #10b981; color: white; }
 .results { background: #f3f4f6; padding: 15px; margin-top: 10px; border-radius: 8px; }
+
+.video-wrap { 
+  position: relative; 
+  width: 100%; 
+  max-width: 400px; 
+  margin: auto; 
+  border: 4px solid #333; 
+  overflow: hidden;
+}
+
+video { width: 100%; display: block; }
+
+/* The container for our 3 zones */
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column; /* Stack them vertically */
+  pointer-events: none;   /* Let clicks pass through to the video */
+}
+/* Individual zone boxes */
+.zone-box {
+  flex: 1; /* Each takes exactly 1/3 of the height */
+  border: 2px dashed rgba(255, 0, 0, 0.5);
+  margin: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end; /* Align labels to the right */
+  padding-right: 10px;
+  box-sizing: border-box;
+}
+.zone-label {
+  background: rgba(255, 0, 0, 0.7);
+  color: white;
+  font-size: 10px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
 </style>
