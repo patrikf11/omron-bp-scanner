@@ -87,13 +87,16 @@ const saveToCloud = async () => {
   if (!readings.value.sys) return
   status.value = "Uploading..."
   const url = `https://thingspeak.com{THINGSPEAK_API_KEY}&field1=${readings.value.sys}&field2=${readings.value.dia}&field3=${readings.value.pulse}`
-  
+  /*
   try {
     const res = await fetch(url)
     if (res.ok) status.value = "Saved to ThingSpeak!"
   } catch (err) {
     status.value = "Upload failed."
   }
+  */
+ status.value = `sys:${readings.value.sys} dia:${readings.value.dia} pul:${readings.value.pulse}`
+
 }
 </script>
 
