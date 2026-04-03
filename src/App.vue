@@ -23,8 +23,89 @@ onMounted(async () => {
   }
 })
 
-// 2. The OCR Logic
+
 const scanReading = async () => {
+  isScanning.value = true;
+  status.value = "Scanning zones (40/40/20)...";
+  
+  const v = video.value;
+  const canvas = previewCanvas.value;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  // 1. Define Window (Match CSS: Top 20%, Left 15%, Width 70%, Height 60%)
+  const w = v.videoWidth;
+  const h = v.videoHeight;
+  const scanX = w * 0.15;
+  const scanY = h * 0.20;
+  const scanW = w * 0.70;
+  const scanH = h * 0.60;
+
+  // 2. Define the Heights for the 40/40/20 split
+  const sysH = scanH * 0.40;   // Top 40%
+  const diaH = scanH * 0.40;   // Middle 40%
+  const pulseH = scanH * 0.20; // Bottom 20%
+
+  // 3. Prepare Preview Canvas (High Contrast)
+  canvas.width = scanW;
+  canvas.height = scanH;
+  ctx.filter = 'grayscale(100%) contrast(400%) brightness(90%)';
+  ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, scanW, scanH);
+
+  // 4. Helper to scan each specific zone height
+  const getZoneText = async (yStart, height, label) => {
+    const tempCanvas = document.createElement('canvas');
+    
+    // Scale up the smaller pulse digits by 1.5x for better OCR
+    const scale = (label === 'pulse') ? 1.5 : 1;
+    tempCanvas.width = scanW * scale;
+    tempCanvas.height = height * scale;
+    
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.drawImage(
+      canvas, 
+      0, yStart, scanW, height,          // Source from preview canvas
+      0, 0, tempCanvas.width, tempCanvas.height // Destination (scaled up)
+    );
+
+    const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
+      tessedit_char_whitelist: '0123456789',
+      tessedit_pageseg_mode: '7', // Single line mode
+      tessjs_create_hocr: '0',
+      tessjs_create_tsv: '0',
+    });
+
+    // Clean text: keep only numbers
+    const cleanNum = text.replace(/\D/g, '');
+    return cleanNum.length > 0 ? cleanNum : null;
+  };
+
+  try {
+    // 5. Run OCR on the three specific areas
+    const sysResult = await getZoneText(0, sysH, 'sys');
+    const diaResult = await getZoneText(sysH, diaH, 'dia');
+    const pulseResult = await getZoneText(sysH + diaH, pulseH, 'pulse');
+
+    if (sysResult && diaResult) {
+      readings.value = { 
+        sys: sysResult, 
+        dia: diaResult, 
+        pulse: pulseResult || '?' 
+      };
+      status.value = "Scan successful!";
+      if (navigator.vibrate) navigator.vibrate(100);
+    } else {
+      status.value = "Partial scan. Check alignment/glare.";
+    }
+  } catch (err) {
+    console.error(err);
+    status.value = "OCR Error. See console.";
+  } finally {
+    isScanning.value = false;
+  }
+};
+
+// 2. The OCR Logic
+const scanReadingOld = async () => {
   isScanning.value = true
   status.value = "Scanning zones..."
   
@@ -40,11 +121,15 @@ const scanReading = async () => {
   const scanW = w * 0.70
   const scanH = h * 0.60
   const zoneH = scanH / 3
+  // new zone 
+  const sysH = scanH * 0.40;
+  const diaH = scanH * 0.40;
+  const pulseH = scanH * 0.20;
 
   // Prepare Preview Canvas
   canvas.width = scanW
   canvas.height = scanH
-  ctx.filter = 'grayscale(100%) contrast(350%) brightness(110%)'
+  ctx.filter = 'grayscale(100%) contrast(400%) brightness(90%) invert(0%)'
   ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, scanW, scanH)
 
   // Helper to scan a specific 1/3 of the cropped area
@@ -57,10 +142,17 @@ const scanReading = async () => {
 
     const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
       tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '6'
+      tessedit_pageseg_mode: '7',
+      tessjs_create_hocr: '0',
+      tessjs_create_tsv: '0'
     })
-    const match = text.match(/\d+/)
-    return match ? match[0] : null
+    
+    const match = text.replace(/\s/g, '').match(/\d+/);
+    if (match && match[0].length >= 2) {
+      // Only accept numbers that are 2 or 3 digits (standard for BP)
+      return match[0];
+    }
+    return null;
   }
 
   try {
@@ -149,6 +241,13 @@ video { width: 100%; display: block; }
 .scan-divider { 
   flex: 1; border-bottom: 1px dashed rgba(0,255,0,0.4); 
   color: #00ff00; font-size: 10px; padding: 5px; text-align: right; 
+}
+.scan-divider:nth-child(1) { flex: 0.4; } /* SYS Gets 40% */
+.scan-divider:nth-child(2) { flex: 0.4; } /* DIA Gets 40% */
+.scan-divider:nth-child(3) { 
+  flex: 0.2; 
+  border-bottom: none; 
+  font-size: 8px; /* Smaller label for the smaller pulse area */
 }
 .scan-divider:last-child { border-bottom: none; }
 
