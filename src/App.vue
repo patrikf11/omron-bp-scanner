@@ -2,14 +2,14 @@
 import { ref, onMounted } from 'vue'
 import Tesseract from 'tesseract.js'
 
-// --- CONFIGURATION 
-const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY' // Change this!
-const THINGSPEAK_CHANNEL_ID = 'YOUR_CHANNEL_ID' // Change this!
+// --- CONFIGURATION ---
+const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY' // <--- REPLACE THIS
 
 const video = ref(null)
-const canvas = ref(null)
-const status = ref('Ready to scan')
+const previewCanvas = ref(null)
+const status = ref('Align Omron screen in green box')
 const readings = ref({ sys: null, dia: null, pulse: null })
+const isScanning = ref(false)
 
 // 1. Start Camera
 onMounted(async () => {
@@ -23,147 +23,138 @@ onMounted(async () => {
   }
 })
 
-
+// 2. The OCR Logic
 const scanReading = async () => {
-  status.value = "Capturing zones..."
-  const context = canvas.value.getContext('2d')
+  isScanning.value = true
+  status.value = "Scanning zones..."
+  
   const v = video.value
-  
-  // 1. Setup high-contrast filters for the LCD segments
-  context.filter = 'grayscale(100%) contrast(250%) brightness(110%)'
-  
-  // 2. Define the three zones (assuming vertical stack on Omron)
+  const canvas = previewCanvas.value
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+
+  // Define Window (Match CSS: Top 20%, Left 15%, Width 70%, Height 60%)
   const w = v.videoWidth
   const h = v.videoHeight
-  const zoneH = h / 3 // Divide screen into 3 equal horizontal strips
+  const scanX = w * 0.15
+  const scanY = h * 0.20
+  const scanW = w * 0.70
+  const scanH = h * 0.60
+  const zoneH = scanH / 3
 
-  const getZoneText = async (yStart) => {
-    // Resize canvas to just the zone size
-    canvas.value.width = w
-    canvas.value.height = zoneH
-    context.filter = 'grayscale(100%) contrast(250%)' // Re-apply after resize
-    
-    // Draw only that slice of the video: drawImage(image, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight)
-    context.drawImage(v, 0, yStart, w, zoneH, 0, 0, w, zoneH)
-    
-    const { data: { text } } = await Tesseract.recognize(canvas.value, 'eng', {
+  // Prepare Preview Canvas
+  canvas.width = scanW
+  canvas.height = scanH
+  ctx.filter = 'grayscale(100%) contrast(350%) brightness(110%)'
+  ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, scanW, scanH)
+
+  // Helper to scan a specific 1/3 of the cropped area
+  const getZoneText = async (index) => {
+    const tempCanvas = document.createElement('canvas')
+    tempCanvas.width = scanW
+    tempCanvas.height = zoneH
+    const tempCtx = tempCanvas.getContext('2d')
+    tempCtx.drawImage(canvas, 0, index * zoneH, scanW, zoneH, 0, 0, scanW, zoneH)
+
+    const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
       tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '6' // Treat as a single uniform block
+      tessedit_pageseg_mode: '6'
     })
-    return text.trim()
+    const match = text.match(/\d+/)
+    return match ? match[0] : null
   }
 
-  // 3. Process each zone individually
   try {
-    const sysText = await getZoneText(0)          // Top 1/3
-    const diaText = await getZoneText(zoneH)      // Middle 1/3
-    const pulseText = await getZoneText(zoneH * 2) // Bottom 1/3
+    const sys = await getZoneText(0)
+    const dia = await getZoneText(1)
+    const pulse = await getZoneText(2)
 
-    readings.value = {
-      sys: sysText.match(/\d+/)?.[0] || '?',
-      dia: diaText.match(/\d+/)?.[0] || '?',
-      pulse: pulseText.match(/\d+/)?.[0] || '?'
+    if (sys && dia) {
+      readings.value = { sys, dia, pulse: pulse || '?' }
+      status.value = "Scan successful!"
+      if (navigator.vibrate) navigator.vibrate(100)
+    } else {
+      status.value = "Could not read. Check alignment/glare."
     }
-    
-    status.value = readings.value.sys !== '?' ? "Scan successful!" : "Scan failed, try again."
   } catch (err) {
     status.value = "OCR Error: " + err.message
+  } finally {
+    isScanning.value = false
   }
 }
-
 
 // 3. Send to ThingSpeak
 const saveToCloud = async () => {
   if (!readings.value.sys) return
-  //status.value = "Uploading to ThingSpeak..."
-  
-  //const url = `https://thingspeak.com{THINGSPEAK_API_KEY}&field1=${readings.value.sys}&field2=${readings.value.dia}&field3=${readings.value.pulse}`
+  status.value = "Uploading..."
+  const url = `https://thingspeak.com{THINGSPEAK_API_KEY}&field1=${readings.value.sys}&field2=${readings.value.dia}&field3=${readings.value.pulse}`
   
   try {
-    //await fetch(url)
-    status.value = "Data saved to Cloud!"
+    const res = await fetch(url)
+    if (res.ok) status.value = "Saved to ThingSpeak!"
   } catch (err) {
-    status.value = "Upload failed: " + err.message
+    status.value = "Upload failed."
   }
 }
 </script>
 
 <template>
   <div class="app-container">
-    <h1>Omron M3 Scanner</h1>
+    <h2>Omron M3 PWA</h2>
     
     <div class="video-wrap">
       <video ref="video" autoplay playsinline></video>
-      <div class="overlay">
-        <div class="zone-box"><span class="zone-label">SYS</span></div>
-        <div class="zone-box"><span class="zone-label">DIA</span></div>
-        <div class="zone-box"><span class="zone-label">PULSE</span></div>
+      <!-- Visual targeting guide -->
+      <div class="scan-window">
+        <div class="scan-divider">SYS</div>
+        <div class="scan-divider">DIA</div>
+        <div class="scan-divider">PULSE</div>
       </div>
     </div>
     
     <div class="controls">
-      <p><strong>Status:</strong> {{ status }}</p>
-      <button @click="scanReading" class="btn-scan">SCAN SCREEN</button>
+      <p class="status-text">{{ status }}</p>
+      <button @click="scanReading" :disabled="isScanning" class="btn-scan">
+        {{ isScanning ? 'SCANNING...' : 'SCAN MONITOR' }}
+      </button>
       
       <div v-if="readings.sys" class="results">
-        <p>SYS: {{ readings.sys }} | DIA: {{ readings.dia }}</p>
-        <button @click="saveToCloud" class="btn-save">SAVE TO THINGSPEAK</button>
+        <p><strong>SYS:</strong> {{ readings.sys }} | <strong>DIA:</strong> {{ readings.dia }}</p>
+        <button @click="saveToCloud" class="btn-save">UPLOAD TO CLOUD</button>
+      </div>
+
+      <div class="debug">
+        <p>AI View (Debug):</p>
+        <canvas ref="previewCanvas" class="preview-canvas"></canvas>
       </div>
     </div>
-
-    <!-- Hidden canvas for processing -->
-    <canvas ref="canvas" style="display:none"></canvas>
   </div>
 </template>
 
 <style scoped>
-.app-container { font-family: sans-serif; text-align: center; padding: 20px; }
-
-.controls { margin-top: 20px; }
-button { padding: 15px 30px; font-size: 1.1rem; cursor: pointer; border-radius: 8px; border: none; margin: 5px; }
-.btn-scan { background: #3b82f6; color: white; }
-.btn-save { background: #10b981; color: white; }
-.results { background: #f3f4f6; padding: 15px; margin-top: 10px; border-radius: 8px; }
-
-.video-wrap { 
-  position: relative; 
-  width: 100%; 
-  max-width: 400px; 
-  margin: auto; 
-  border: 4px solid #333; 
-  overflow: hidden;
-}
-
+.app-container { font-family: sans-serif; text-align: center; color: #333; max-width: 450px; margin: auto; padding: 10px; }
+.video-wrap { position: relative; width: 100%; border-radius: 15px; overflow: hidden; background: #000; }
 video { width: 100%; display: block; }
 
-/* The container for our 3 zones */
-.overlay {
+/* Target Box */
+.scan-window {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column; /* Stack them vertically */
-  pointer-events: none;   /* Let clicks pass through to the video */
+  top: 20%; bottom: 20%; left: 15%; right: 15%;
+  border: 3px solid #00ff00;
+  box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.4);
+  display: flex; flex-direction: column; pointer-events: none;
 }
-/* Individual zone boxes */
-.zone-box {
-  flex: 1; /* Each takes exactly 1/3 of the height */
-  border: 2px dashed rgba(255, 0, 0, 0.5);
-  margin: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end; /* Align labels to the right */
-  padding-right: 10px;
-  box-sizing: border-box;
+.scan-divider { 
+  flex: 1; border-bottom: 1px dashed rgba(0,255,0,0.4); 
+  color: #00ff00; font-size: 10px; padding: 5px; text-align: right; 
 }
-.zone-label {
-  background: rgba(255, 0, 0, 0.7);
-  color: white;
-  font-size: 10px;
-  padding: 2px 5px;
-  border-radius: 3px;
-  text-transform: uppercase;
-}
+.scan-divider:last-child { border-bottom: none; }
+
+/* UI Elements */
+.status-text { font-weight: bold; margin: 15px 0; color: #3b82f6; height: 20px; }
+button { width: 80%; padding: 15px; border-radius: 10px; border: none; font-weight: bold; margin: 10px 0; cursor: pointer; }
+.btn-scan { background: #3b82f6; color: white; }
+.btn-save { background: #10b981; color: white; }
+.results { background: #f0fdf4; padding: 15px; border-radius: 10px; border: 1px solid #bbf7d0; }
+.preview-canvas { width: 200px; border: 1px solid #ccc; margin-top: 5px; background: #000; }
+.debug { margin-top: 20px; font-size: 12px; color: #666; }
 </style>
