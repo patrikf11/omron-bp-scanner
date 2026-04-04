@@ -52,7 +52,7 @@ const runLoop = () => {
   processFrame()
   requestAnimationFrame(runLoop)
 }
-//
+
 const processFrame = () => {
   const cv = window.cv;
   if (!video.value || video.value.readyState < 2) return;
@@ -155,127 +155,53 @@ let mergedBoxes = [];
     return segmentMap[bits] ?? "";
   };
 
-  readings.value.sys = sysGroup.map(parse).join("");
-  readings.value.dia = diaGroup.map(parse).join("");
-  readings.value.pulse = pulGroup.map(parse).join("");
+  const parseDigitBox = (rect) => {
+    const segMap = {
+      "1111110": "0", "0110000": "1", "1101101": "2", "1111001": "3", "0110011": "4",
+      "1011011": "5", "1011111": "6", "1110000": "7", "1111111": "8", "1111011": "9"
+    };
+    const { x, y, width: dW, height: dH } = rect;
+  
+    // Define 7 points relative to THIS specific box
+    // We move the 'X' points closer to the right because "1" is only on the right side
+    const pts = [
+      {x: dW * 0.5,  y: dH * 0.1}, // a: top
+      {x: dW * 0.85, y: dH * 0.25},// b: top-right
+      {x: dW * 0.85, y: dH * 0.75},// c: bottom-right
+      {x: dW * 0.5,  y: dH * 0.9}, // d: bottom
+      {x: dW * 0.15, y: dH * 0.75},// e: bottom-left
+      {x: dW * 0.15, y: dH * 0.25},// f: top-left
+      {x: dW * 0.5,  y: dH * 0.5}  // g: middle
+    ];
+
+    const bits = pts.map(pt => {
+      const pxX = Math.round(x + pt.x);
+      const pxY = Math.round(y + pt.y);
+    
+      // Safety check
+      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
+
+      // Draw small white dots in the debug view so you can see the "Bullseye"
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+
+      // If the pixel is BLACK (< 120), the segment is ON
+      return roi.ucharAt(pxY, pxX) < 120 ? "1" : "0";
+    }).join("");
+    // Add a "1" variation: some Omron 1s are so thin they only hit the Right segments
+    if (bits === "0110000" || bits === "0100000" || bits === "0010000") return "1";
+    return segMap[bits] ?? ""; 
+  };
+
+
+  readings.value.sys = sysGroup.map(parseDigitBox).join("");
+  readings.value.dia = diaGroup.map(parseDigitBox).join("");
+  readings.value.pulse = pulGroup.map(parseDigitBox).join("");
 
   cv.imshow(debugCanvas.value, roi);
 
   // 6. CLEANUP
   src.delete(); gray.delete(); binary.delete(); roi.delete(); 
   inverted.delete(); contours.delete(); hierarchy.delete(); M.delete();
-};
-
-//
-const processFramed1 = () => {
-  const cv = window.cv;
-  if (!video.value || video.value.readyState < 2) return;
-
-  // 1. Precise Image Capture
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = video.value.videoWidth;
-  tempCanvas.height = video.value.videoHeight;
-  const tempCtx = tempCanvas.getContext('2d');
-  tempCtx.drawImage(video.value, 0, 0);
-
-  const src = cv.imread(tempCanvas);
-  const gray = new cv.Mat();
-  const binary = new cv.Mat();
-  
-  // 2. CONVERT & ENHANCE CONTRAST
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  
-  // Stretch the grey levels to the absolute max/min
-  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
-
-  // 3. SMOOTHING (Removes the "speckles")
-  // Blurring slightly helps join the 7-segments into solid shapes
-  let ksize = new cv.Size(3, 3);
-  cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
-
-  // 4. ADAPTIVE THRESHOLD (The "Speckle Killer")
-  // We use THRESH_BINARY (not INV) so digits stay BLACK on WHITE for the debug view.
-  // The '15' at the end is the 'C' constant. Increase it (e.g., 20 or 25) to make it "whiter".
-  cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 15);
-
-  // 5. SQUARE ROI (Width 28%)
-  const scanSize = binary.cols * 0.28;
-  const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
-
-  // 6. FIND CONTOURS (Looking for the BLACK digits)
-  // findContours works best on WHITE objects, so we temporarily INVERT for the logic
-  let inverted = new cv.Mat();
-  cv.bitwise_not(roi, inverted);
-
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
-  cv.findContours(inverted, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-  let digitBoxes = [];
-  for (let i = 0; i < contours.size(); ++i) {
-    let rect = cv.boundingRect(contours.get(i));
-    // Filter: Omron digits are taller than they are wide.
-    if (rect.height > 20 && rect.height > rect.width) {
-      digitBoxes.push(rect);
-      // Draw a box around detected digits in the ROI
-      cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), [100, 100, 100, 255], 1);
-    }
-  }
-  //merge adjacent vertical boxes
-  let mergedBoxes = [];
-  digitBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find neighbors
-
-  for (let i = 0; i < digitBoxes.length; i++) {
-    let current = digitBoxes[i];
-    let merged = false;
-
-    for (let j = 0; j < mergedBoxes.length; j++) {
-      let prev = mergedBoxes[j];
-      
-      // Check if they are horizontally aligned (same X) and vertically close
-      const horizontalOverlap = Math.abs(current.x - prev.x) < (scanSize * 0.05);
-      const verticalGap = current.y - (prev.y + prev.height);
-
-      if (horizontalOverlap && verticalGap < (current.height * 1.5)) {
-        // Merge the two boxes into one tall one
-        prev.y = Math.min(prev.y, current.y);
-        prev.height = Math.max(prev.y + prev.height, current.y + current.height) - prev.y;
-        prev.width = Math.max(prev.width, current.width);
-        merged = true;
-        break;
-      }
-    }
-    if (!merged) mergedBoxes.push(current);
-  }
-  // Now use mergedBoxes for the rest of your row grouping
-  digitBoxes = mergedBoxes;
-
-
-
-
-  // 7. Sort and Parse
-  digitBoxes.sort((a, b) => (a.y - b.y) || (a.x - b.x));
-  const results = digitBoxes.map(box => {
-    // Check segments within this box in 'roi' (Black digits on white)
-    const { x, y, width: dW, height: dH } = box;
-    const pts = [
-      {x: dW/2, y: dH*0.1}, {x: dW*0.9, y: dH*0.25}, {x: dW*0.9, y: dH*0.75},
-      {x: dW/2, y: dH*0.9}, {x: dW*0.1, y: dH*0.75}, {x: dW*0.1, y: dH*0.25},
-      {x: dW/2, y: dH*0.5}
-    ];
-    const bits = pts.map(pt => roi.ucharAt(Math.round(y + pt.y), Math.round(x + pt.x)) < 128 ? "1" : "0").join("");
-    return segmentMap[bits] ?? "";
-  }).join("");
-
-  readings.value.sys = results.substring(0, 3);
-  readings.value.dia = results.substring(3, 6);
-  readings.value.pulse = results.substring(6);
-
-  cv.imshow(debugCanvas.value, roi);
-
-  // 8. CLEANUP
-  src.delete(); gray.delete(); binary.delete(); roi.delete(); inverted.delete();
-  contours.delete(); hierarchy.delete();
 };
 
 </script>
