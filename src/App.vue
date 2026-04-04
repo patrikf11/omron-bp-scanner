@@ -47,7 +47,6 @@ const processFrame = () => {
   const cv = window.cv;
   if (!video.value || video.value.readyState < 2) return;
 
-  // 1. Capture & Pre-process (as before)
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = video.value.videoWidth;
   tempCanvas.height = video.value.videoHeight;
@@ -56,65 +55,74 @@ const processFrame = () => {
 
   const src = cv.imread(tempCanvas);
   const gray = new cv.Mat();
+  const binary = new cv.Mat();
+  
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  
+  // 1. STRETCH CONTRAST
   cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
-  cv.threshold(gray, gray, 110, 255, cv.THRESH_BINARY);
+  
+  // 2. INVERTED THRESHOLD: Numbers become WHITE (255), Background becomes BLACK (0)
+  // This solves the "All Black" issue by making the numbers the target.
+  cv.threshold(gray, binary, 100, 255, cv.THRESH_BINARY_INV);
 
-  // 2. Square ROI (Width 28%)
-  const scanSize = gray.cols * 0.28;
-  const roi = gray.roi(new cv.Rect((gray.cols - scanSize)/2, (gray.rows - scanSize)/2, scanSize, scanSize));
+  // 3. NOISE REDUCTION: Remove tiny white speckles
+  let M = cv.Mat.ones(2, 2, cv.CV_8U);
+  cv.morphologyEx(binary, binary, cv.MORPH_OPEN, M);
 
-  // 3. FIND CONTOURS (The magic part)
+  // 4. ROI SQUARE (Width 28%)
+  const scanSize = binary.cols * 0.28;
+  const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
+
+  // 5. FIND CONTOURS
   let contours = new cv.MatVector();
   let hierarchy = new cv.Mat();
-  // Find all dark shapes (the digits)
   cv.findContours(roi, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-  let detectedDigits = [];
-
+  let digitBoxes = [];
   for (let i = 0; i < contours.size(); ++i) {
     let rect = cv.boundingRect(contours.get(i));
-    // FILTER: Only keep boxes that look like digits (Height > 15px, Aspect Ratio vertical)
-    if (rect.height > 15 && rect.height > rect.width) {
-      detectedDigits.push(rect);
-      // Draw a box around every detected digit for feedback
-      cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), [200, 200, 200, 255], 1);
+    // Filter: Look for vertical rectangles that aren't too small
+    if (rect.height > 20 && rect.height > rect.width) {
+      digitBoxes.push(rect);
+      // Draw a box around every detected digit
+      cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), [255, 255, 255, 255], 1);
     }
   }
 
-  // 4. Sort digits Top-to-Bottom, then Left-to-Right
-  detectedDigits.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  // 6. Group by Row (SYS, DIA, PULSE)
+  // Sort by Y-coordinate
+  digitBoxes.sort((a, b) => a.y - b.y);
 
-  // 5. Analyze each detected box using the 7-segment logic
-  const parseDigitBox = (rect) => {
+  const parseDigit = (rect) => {
     const { x, y, width: dW, height: dH } = rect;
+    // Sensor points (since numbers are now WHITE, we check for val > 128)
     const pts = [
-      {x: dW/2, y: dH*0.15}, {x: dW*0.85, y: dH*0.3}, {x: dW*0.85, y: dH*0.7},
-      {x: dW/2, y: dH*0.85}, {x: dW*0.15, y: dH*0.7}, {x: dW*0.15, y: dH*0.3},
+      {x: dW/2, y: dH*0.1}, {x: dW*0.9, y: dH*0.25}, {x: dW*0.9, y: dH*0.75},
+      {x: dW/2, y: dH*0.9}, {x: dW*0.1, y: dH*0.75}, {x: dW*0.1, y: dH*0.25},
       {x: dW/2, y: dH/2}
     ];
-
     const bits = pts.map(pt => {
       const pxX = Math.round(x + pt.x), pxY = Math.round(y + pt.y);
-      cv.circle(roi, new cv.Point(pxX, pxY), 1, [255, 255, 255, 255], -1);
-      return roi.ucharAt(pxY, pxX) < 120 ? "1" : "0";
+      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
+      return roi.ucharAt(pxY, pxX) > 128 ? "1" : "0"; 
     }).join("");
-
     return segmentMap[bits] ?? "";
   };
 
-  // Group by rows (SYS is top, DIA is mid, PULSE is bottom)
-  // We can just join all detected digits for now to see what we get
-  const allText = detectedDigits.map(d => parseDigitBox(d)).join("");
-  readings.value.sys = allText.substring(0, 3);
-  readings.value.dia = allText.substring(3, 6);
-  readings.value.pulse = allText.substring(6, 9);
+  // Logic: 1st row usually has 3 digits, 2nd has 3, 3rd has 2 or 3
+  const results = digitBoxes.map(box => parseDigit(box)).join("");
+  readings.value.sys = results.substring(0, 3);
+  readings.value.dia = results.substring(3, 6);
+  readings.value.pulse = results.substring(6);
 
   cv.imshow(debugCanvas.value, roi);
 
   // Cleanup
-  src.delete(); gray.delete(); roi.delete(); contours.delete(); hierarchy.delete();
+  src.delete(); gray.delete(); binary.delete(); roi.delete(); 
+  contours.delete(); hierarchy.delete(); M.delete();
 };
+
 //
 const processFrameOld = () => {
   const cv = window.cv;
