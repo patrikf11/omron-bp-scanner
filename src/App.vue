@@ -289,6 +289,7 @@ let mergedBoxes = [];
       <button @click="toggleLive" :disabled="!cvReady" :class="isLive ? 'btn-stop' : 'btn-start'">
         {{ isLive ? 'STOP ALIGNMENT' : 'START LIVE VIEW' }}
       </button>
+      <div class="row">SYS: {{ readings.sys }} | DIA: {{ readings.dia }} | PUL: {{ readings.pulse }}</div>
       <div v-if="readings.sys" class="results">
         <div class="row">SYS: {{ readings.sys }} | DIA: {{ readings.dia }} | PUL: {{ readings.pulse }}</div>
         <button @click="saveToCloud" class="btn-cloud">SEND TO THINGSPEAK</button>
