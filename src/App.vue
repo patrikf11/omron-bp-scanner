@@ -67,6 +67,7 @@ const prefilter = (src, gray, binary) => {
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   // 2. Normalize to handle glare on the Omron screen
   cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+  cv.medianBlur(gray, gray, 3);
   // 3. Adaptive Threshold (Strict for LCD segments)
   // 15 is the block size, 15 is the constant subtracted from the mean
   cv.adaptiveThreshold(
@@ -100,18 +101,18 @@ const processFrame = async () => {
   const scanSize = binary.cols * 0.28;
   const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
 
-  // 3. FLIP IT NOW: White digits on Black background
-  cv.bitwise_not(roi, roi);
-
-  // 4. DILATE a COPY for contour finding (joins the gaps)
+  // find boxes
   let workMat = new cv.Mat();
+  cv.bitwise_not(roi, workMat);
   let M = cv.Mat.ones(3, 3, cv.CV_8U); 
   cv.dilate(roi, workMat, M);
 
   let contours = new cv.MatVector();
   let hierarchy = new cv.Mat();
   cv.findContours(workMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
+  
+  cv.bitwise_not(roi, roi);
+  
   /*
   const cv = window.cv;
   if (!video.value || video.value.readyState < 2) return;
