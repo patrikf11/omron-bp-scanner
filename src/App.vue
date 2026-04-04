@@ -31,16 +31,31 @@ const toggleLive = () => {
   if (isLive.value) runLoop()
 }
 
+const runLoop = async () => {
+  if (!isLive.value) return;
+
+  // 1. Only run if we aren't already busy with a scan
+  if (!isProcessing.value) {
+    await processFrame(); 
+  }
+
+  // 2. Wait 500ms before trying the next scan
+  // This is fast enough to feel "live" but slow enough to be stable
+  setTimeout(runLoop, 500); 
+};
+/*
 const runLoop = () => {
   if (!isLive.value) return
   processFrame()
   requestAnimationFrame(runLoop)
 }
-
-const processFrame = () => {
+*/
+const isProcessing = ref(false);
+const processFrame = async () => {
   const cv = window.cv;
   if (!video.value || video.value.readyState < 2) return;
 
+  isProcessing.value = true;
   // 1. Precise Image Capture
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = video.value.videoWidth;
@@ -128,6 +143,37 @@ let mergedBoxes = [];
   const sortX = (a, b) => a.x - b.x;
   sysGroup.sort(sortX); diaGroup.sort(sortX); pulGroup.sort(sortX);
 
+  const parseDigitBox = async (rect) => {
+    const { x, y, width: dW, height: dH } = rect;
+
+    // 1. Create a tiny canvas for just this one digit
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = dW * 3;  // Scale up for better OCR
+    tempCanvas.height = dH * 3;
+    const tempCtx = tempCanvas.getContext('2d');
+
+    // 2. Draw the digit from the ROI into the tiny canvas
+    // We use the ROI which is already high-contrast
+    tempCtx.drawImage(
+      debugCanvas.value, 
+      x, y, dW, dH,           // Source coordinates in ROI
+      0, 0, tempCanvas.width, tempCanvas.height  // Destination (scaled up)
+    );
+
+    // 3. Run Tesseract on this single box
+    const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
+      tessedit_char_whitelist: '0123456789',
+      tessedit_pageseg_mode: '10', // '10' treats the image as a single character
+    });
+
+    // Clean the result (Tesseract sometimes adds newlines)
+    const result = text.trim();
+  
+    // Show a little feedback in debug view
+    cv.putText(roi, result, new cv.Point(x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, new cv.Scalar(255), 1);
+    return result;
+};
+/*
   const parseDigitBox = (rect) => {
     const segMap = {
       "1111110": "0", "0110000": "1", "1101101": "2", "1111001": "3", "0110011": "4",
@@ -184,21 +230,47 @@ let mergedBoxes = [];
 
     return "";
   };
-
+*/
   // Add this right before the digitBoxes.map(parseDigitBox) line
   let kernel = cv.Mat.ones(2, 2, cv.CV_8U);
   cv.erode(roi, roi, kernel); 
   kernel.delete();
 
-  readings.value.sys = sysGroup.map(parseDigitBox).join("");
-  readings.value.dia = diaGroup.map(parseDigitBox).join("");
-  readings.value.pulse = pulGroup.map(parseDigitBox).join("");
+  const parseAll = async (group) => {
+    const results = await Promise.all(group.map(box => parseDigitBox(box)));
+    return results.join("");
+  };
 
   cv.imshow(debugCanvas.value, roi);
+  try {
+    const sys = await parseAll(sysGroup);
+    const dia = await parseAll(diaGroup);
+    const pulse = await parseAll(pulGroup);
+    // Only update if we actually found something
+    if (sys || dia) {
+      readings.value = { sys, dia, pulse };
+      status.value = "Scan successful!";
+    }
+  } catch (err) {
+    console.error("OCR Error:", err);
+  } finally {
+    isProcessing.value = false; // Unlock for the next frame
+    
+    // Cleanup OpenCV memory (Crucial!)
+    src.delete(); gray.delete(); roi.delete(); 
+    if(inverted) inverted.delete();
+    if(contours) contours.delete();
+    if(hierarchy) hierarchy.delete();
+  }
+    
+  //readings.value.sys = sysGroup.map(parseDigitBox).join("");
+  //readings.value.dia = diaGroup.map(parseDigitBox).join("");
+  //readings.value.pulse = pulGroup.map(parseDigitBox).join("");
 
+  
   // 6. CLEANUP
-  src.delete(); gray.delete(); binary.delete(); roi.delete(); 
-  inverted.delete(); contours.delete(); hierarchy.delete(); M.delete();
+  //src.delete(); gray.delete(); binary.delete(); roi.delete(); 
+  //inverted.delete(); contours.delete(); hierarchy.delete(); M.delete();
 };
 
 </script>
@@ -206,7 +278,7 @@ let mergedBoxes = [];
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA segm match</h3>
+    <h3>Omron M3 OpenCV PWA tesseract</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
