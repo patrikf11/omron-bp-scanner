@@ -50,8 +50,69 @@ const runLoop = () => {
   requestAnimationFrame(runLoop)
 }
 */
+
+const tempCanvas = document.createElement('canvas');
+const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+const captureToCanvas = () => {
+  if (!video.value || video.value.readyState < 2) return null;
+  tempCanvas.width = video.value.videoWidth;
+  tempCanvas.height = video.value.videoHeight;
+  tempCtx.drawImage(video.value, 0, 0);
+  return tempCanvas;
+}
+
+const prefilter = (src, gray, binary) => {
+  const cv = window.cv;
+  // 1. Grayscale
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  // 2. Normalize to handle glare on the Omron screen
+  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+  // 3. Adaptive Threshold (Strict for LCD segments)
+  // 15 is the block size, 15 is the constant subtracted from the mean
+  cv.adaptiveThreshold(
+    gray, 
+    binary, 
+    255, 
+    cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
+    cv.THRESH_BINARY, 
+    15, 
+    15
+  );
+};
+
 const isProcessing = ref(false);
 const processFrame = async () => {
+  const cv = window.cv;
+  if (!cv || isProcessing.value) return;
+
+  const canvas = captureToCanvas();
+  if (!canvas || canvas.width === 0) return;
+
+  isProcessing.value = true;
+
+  // Start OpenCV
+  const src = cv.imread(canvas);  
+  const gray = new cv.Mat();
+  const binary = new cv.Mat();
+   
+  prefilter(src, gray, binary);
+
+  const scanSize = binary.cols * 0.28;
+  const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
+
+  // 3. FLIP IT NOW: White digits on Black background
+  cv.bitwise_not(roi, roi);
+
+  // 4. DILATE a COPY for contour finding (joins the gaps)
+  let workMat = new cv.Mat();
+  let M = cv.Mat.ones(3, 3, cv.CV_8U); 
+  cv.dilate(roi, workMat, M);
+
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
+  cv.findContours(workMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  /*
   const cv = window.cv;
   if (!video.value || video.value.readyState < 2) return;
 
@@ -76,7 +137,7 @@ const processFrame = async () => {
   const scanSize = binary.cols * 0.28;
   const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
   cv.bitwise_not(roi, roi);
-   
+
   // 2. DILATION: Fatten the black segments so they touch
   // This turns a "broken" 8 into a solid 8
   let M = cv.Mat.ones(2, 2, cv.CV_8U);
@@ -88,7 +149,7 @@ const processFrame = async () => {
   let contours = new cv.MatVector();
   let hierarchy = new cv.Mat();
   cv.findContours(inverted, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
+  */
   let digitBoxes = [];
   for (let i = 0; i < contours.size(); ++i) {
     let rect = cv.boundingRect(contours.get(i));
