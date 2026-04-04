@@ -42,8 +42,81 @@ const runLoop = () => {
   processFrame()
   requestAnimationFrame(runLoop)
 }
-
+//
 const processFrame = () => {
+  const cv = window.cv;
+  if (!video.value || video.value.readyState < 2) return;
+
+  // 1. Capture & Pre-process (as before)
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = video.value.videoWidth;
+  tempCanvas.height = video.value.videoHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(video.value, 0, 0);
+
+  const src = cv.imread(tempCanvas);
+  const gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+  cv.threshold(gray, gray, 110, 255, cv.THRESH_BINARY);
+
+  // 2. Square ROI (Width 28%)
+  const scanSize = gray.cols * 0.28;
+  const roi = gray.roi(new cv.Rect((gray.cols - scanSize)/2, (gray.rows - scanSize)/2, scanSize, scanSize));
+
+  // 3. FIND CONTOURS (The magic part)
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
+  // Find all dark shapes (the digits)
+  cv.findContours(roi, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  let detectedDigits = [];
+
+  for (let i = 0; i < contours.size(); ++i) {
+    let rect = cv.boundingRect(contours.get(i));
+    // FILTER: Only keep boxes that look like digits (Height > 15px, Aspect Ratio vertical)
+    if (rect.height > 15 && rect.height > rect.width) {
+      detectedDigits.push(rect);
+      // Draw a box around every detected digit for feedback
+      cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), [200, 200, 200, 255], 1);
+    }
+  }
+
+  // 4. Sort digits Top-to-Bottom, then Left-to-Right
+  detectedDigits.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+
+  // 5. Analyze each detected box using the 7-segment logic
+  const parseDigitBox = (rect) => {
+    const { x, y, width: dW, height: dH } = rect;
+    const pts = [
+      {x: dW/2, y: dH*0.15}, {x: dW*0.85, y: dH*0.3}, {x: dW*0.85, y: dH*0.7},
+      {x: dW/2, y: dH*0.85}, {x: dW*0.15, y: dH*0.7}, {x: dW*0.15, y: dH*0.3},
+      {x: dW/2, y: dH/2}
+    ];
+
+    const bits = pts.map(pt => {
+      const pxX = Math.round(x + pt.x), pxY = Math.round(y + pt.y);
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, [255, 255, 255, 255], -1);
+      return roi.ucharAt(pxY, pxX) < 120 ? "1" : "0";
+    }).join("");
+
+    return segmentMap[bits] ?? "";
+  };
+
+  // Group by rows (SYS is top, DIA is mid, PULSE is bottom)
+  // We can just join all detected digits for now to see what we get
+  const allText = detectedDigits.map(d => parseDigitBox(d)).join("");
+  readings.value.sys = allText.substring(0, 3);
+  readings.value.dia = allText.substring(3, 6);
+  readings.value.pulse = allText.substring(6, 9);
+
+  cv.imshow(debugCanvas.value, roi);
+
+  // Cleanup
+  src.delete(); gray.delete(); roi.delete(); contours.delete(); hierarchy.delete();
+};
+//
+const processFrameOld = () => {
   const cv = window.cv;
   if (!video.value || video.value.readyState < 2 || video.value.paused) return;
 
@@ -133,7 +206,7 @@ const processFrame = () => {
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA sq2</h3>
+    <h3>Omron M3 OpenCV PWA dyn</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
