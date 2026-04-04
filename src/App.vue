@@ -156,7 +156,10 @@ const processFrame = async () => {
     // 4. RELAXED FILTER: Accept thinner (the "1") and smaller digits
     if (rect.height > 15 && rect.height < (scanSize * 0.5)) {
       digitBoxes.push(rect);
-      cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), new cv.Scalar(150), 1);
+      cv.rectangle(roi, 
+        new cv.Point(rect.x, rect.y), 
+        new cv.Point(rect.x + rect.width, rect.y + rect.height), 
+        new cv.Scalar(255), 1);
     }
   }
 
