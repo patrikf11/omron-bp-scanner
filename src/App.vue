@@ -111,9 +111,9 @@ const processFrame = () => {
     }
   }
 //merge adjacent vertical boxes
-digitBoxes = mergeAdjacentVerticalBoxes(digitBoxes);
+//digitBoxes = mergeAdjacentVerticalBoxes(digitBoxes);
 
-/*
+
 let mergedBoxes = [];
   digitBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find neighbors
 
@@ -141,7 +141,7 @@ let mergedBoxes = [];
   }
   // Now use mergedBoxes for the rest of your row grouping
   digitBoxes = mergedBoxes;
-  */
+ 
 
   // 5. ROW GROUPING (SYS/DIA/PULSE)
   // Group digits into 3 rows based on their Y coordinate
