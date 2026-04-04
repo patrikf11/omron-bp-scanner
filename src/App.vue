@@ -75,7 +75,8 @@ const processFrame = async () => {
 
   const scanSize = binary.cols * 0.28;
   const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
-
+  cv.bitwise_not(roi, roi);
+   
   // 2. DILATION: Fatten the black segments so they touch
   // This turns a "broken" 8 into a solid 8
   let M = cv.Mat.ones(2, 2, cv.CV_8U);
@@ -149,8 +150,7 @@ let mergedBoxes = [];
   
   // 1. Extract the digit and ensure segments are WHITE for countNonZero
   let digitMat = roi.roi(rect);
-  cv.bitwise_not(digitMat, digitMat); 
-  
+
   // 2. Define the 7 segments as relative boxes [x, y, width, height]
   // These are percentages (0.0 to 1.0) of the bounding box
   const segments = [
