@@ -105,7 +105,7 @@ const processFrame = async () => {
   let workMat = new cv.Mat();
   cv.bitwise_not(roi, workMat);
   let M = cv.Mat.ones(3, 3, cv.CV_8U); 
-  cv.dilate(roi, workMat, M);
+  cv.dilate(workMat, workMat, M);
 
   let contours = new cv.MatVector();
   let hierarchy = new cv.Mat();
@@ -113,44 +113,6 @@ const processFrame = async () => {
   
   cv.bitwise_not(roi, roi);
   
-  /*
-  const cv = window.cv;
-  if (!video.value || video.value.readyState < 2) return;
-
-  isProcessing.value = true;
-  // 1. Precise Image Capture
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = video.value.videoWidth;
-  tempCanvas.height = video.value.videoHeight;
-  const tempCtx = tempCanvas.getContext('2d');
-  tempCtx.drawImage(video.value, 0, 0);
-
-  const src = cv.imread(tempCanvas);
-  const gray = new cv.Mat();
-  const binary = new cv.Mat();
-   
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
-
-  // 1. ADAPTIVE THRESHOLD (Keep it strict)
-  cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 15);
-
-  const scanSize = binary.cols * 0.28;
-  const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
-  cv.bitwise_not(roi, roi);
-
-  // 2. DILATION: Fatten the black segments so they touch
-  // This turns a "broken" 8 into a solid 8
-  let M = cv.Mat.ones(2, 2, cv.CV_8U);
-  let inverted = new cv.Mat();
-  cv.bitwise_not(roi, inverted); // Invert so digits are white for dilation
-  cv.dilate(inverted, inverted, M);
-
-  // 3. FIND CONTOURS on the "fattened" digits
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
-  cv.findContours(inverted, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  */
   let digitBoxes = [];
   for (let i = 0; i < contours.size(); ++i) {
     let rect = cv.boundingRect(contours.get(i));
@@ -275,12 +237,52 @@ let mergedBoxes = [];
   inverted.delete(); contours.delete(); hierarchy.delete(); M.delete();
 };
 
+
+ /*
+  const cv = window.cv;
+  if (!video.value || video.value.readyState < 2) return;
+
+  isProcessing.value = true;
+  // 1. Precise Image Capture
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = video.value.videoWidth;
+  tempCanvas.height = video.value.videoHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(video.value, 0, 0);
+
+  const src = cv.imread(tempCanvas);
+  const gray = new cv.Mat();
+  const binary = new cv.Mat();
+   
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+
+  // 1. ADAPTIVE THRESHOLD (Keep it strict)
+  cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 15);
+
+  const scanSize = binary.cols * 0.28;
+  const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
+  cv.bitwise_not(roi, roi);
+
+  // 2. DILATION: Fatten the black segments so they touch
+  // This turns a "broken" 8 into a solid 8
+  let M = cv.Mat.ones(2, 2, cv.CV_8U);
+  let inverted = new cv.Mat();
+  cv.bitwise_not(roi, inverted); // Invert so digits are white for dilation
+  cv.dilate(inverted, inverted, M);
+
+  // 3. FIND CONTOURS on the "fattened" digits
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
+  cv.findContours(inverted, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  */
+ 
 </script>
 
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA tesseract</h3>
+    <h3>Omron M3 OpenCV PWA segm 7</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
