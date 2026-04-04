@@ -44,6 +44,88 @@ const runLoop = () => {
 }
 
 const processFrame = () => {
+  const cv = window.cv;
+  // 1. Check if video is ready
+  if (!video.value || video.value.readyState < 2 || video.value.paused) return;
+
+  // 2. CAPTURE frame to temporary canvas (Fixes black/frozen frames on mobile)
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = video.value.videoWidth;
+  tempCanvas.height = video.value.videoHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(video.value, 0, 0);
+
+  // 3. LOAD into OpenCV
+  const src = cv.imread(tempCanvas);
+  const gray = new cv.Mat();
+  
+  // 4. PRE-PROCESS for Grey Distinction
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  
+  // Stretch contrast: makes background white and segments dark
+  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+  
+  // Manual Threshold: adjust 120 if too dark/light
+  cv.threshold(gray, gray, 120, 255, cv.THRESH_BINARY); 
+
+  // 5. DEFINE 30cm ROI (45% Wide, 35% High)
+  const w = gray.cols * 0.45;
+  const h = gray.rows * 0.35;
+  const roi = gray.roi(new cv.Rect(gray.cols * 0.275, gray.rows * 0.325, w, h));
+
+  // 6. ROW DIMENSIONS (37/38/25)
+  const sysRowH = h * 0.37;
+  const diaRowH = h * 0.38;
+  const pulseRowH = h * 0.25;
+  const dW = w * 0.20;
+  const dH = h * 0.20;
+
+  const getDigit = (col, row) => {
+    const dX = Math.round((w * 0.12) + (col * dW * 1.15));
+    let dY = 0;
+    if (row === 0) dY = Math.round(sysRowH * 0.1);
+    else if (row === 1) dY = Math.round(sysRowH + (diaRowH * 0.1));
+    else dY = Math.round(sysRowH + diaRowH + (pulseRowH * 0.1));
+    
+    // Draw guide box
+    cv.rectangle(roi, new cv.Point(dX, dY), new cv.Point(dX + dW, dY + dH), new cv.Scalar(180), 1);
+
+    const pts = [
+      {x: dW/2, y: dH*0.15}, {x: dW*0.85, y: dH*0.3}, {x: dW*0.85, y: dH*0.7},
+      {x: dW/2, y: dH*0.85}, {x: dW*0.15, y: dH*0.7}, {x: dW*0.15, y: dH*0.3},
+      {x: dW/2, y: dH/2}
+    ];
+
+    const bits = pts.map(pt => {
+      const pxX = Math.round(dX + pt.x), pxY = Math.round(dY + pt.y);
+      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
+      
+      let darkCount = 0;
+      for(let i=-1; i<=1; i++){
+        for(let j=-1; j<=1; j++){
+          // Check pixel value. If < 100, it's a dark segment.
+          if (roi.ucharAt(pxY+i, pxX+j) < 100) darkCount++;
+        }
+      }
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+      return darkCount >= 5 ? "1" : "0";
+    }).join("");
+
+    return segmentMap[bits] ?? "";
+  };
+
+  // 7. EXTRACT READINGS
+  readings.value.sys = `${getDigit(0,0)}${getDigit(1,0)}${getDigit(2,0)}`;
+  readings.value.dia = `${getDigit(0,1)}${getDigit(1,1)}${getDigit(2,1)}`;
+  readings.value.pulse = `${getDigit(0,2)}${getDigit(1,2)}${getDigit(2,2)}`;
+
+  // 8. SHOW OUTPUT & CLEANUP
+  cv.imshow(debugCanvas.value, roi);
+  src.delete(); gray.delete(); roi.delete();
+};
+
+//
+const processFramebad = () => {
   const cv = window.cv
   if (!video.value || video.value.readyState < 2 || video.value.paused) return
 
