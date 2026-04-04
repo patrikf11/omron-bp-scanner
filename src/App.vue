@@ -141,13 +141,13 @@ let mergedBoxes = [];
 
     // Define 7 points relative to THIS specific box
     const pts = [
-      {x: dW * 0.5,  y: dH * 0.1},  // a: top
-      {x: dW * 0.9,  y: dH * 0.25}, // b: top-right
-      {x: dW * 0.9,  y: dH * 0.75}, // c: bottom-right
-      {x: dW * 0.5,  y: dH * 0.9},  // d: bottom
-      {x: dW * 0.1,  y: dH * 0.75}, // e: bottom-left
-      {x: dW * 0.1,  y: dH * 0.25}, // f: top-left
-      {x: dW * 0.5,  y: dH * 0.5}   // g: middle
+      {x: dW * 0.5,  y: dH * 0.15}, // a: top (down slightly)
+      {x: dW * 0.85, y: dH * 0.3},  // b: TR (in slightly)
+      {x: dW * 0.85, y: dH * 0.7},  // c: BR (in slightly)
+      {x: dW * 0.5,  y: dH * 0.85}, // d: bottom (up slightly)
+      {x: dW * 0.15, y: dH * 0.7},  // e: BL (in slightly)
+      {x: dW * 0.15, y: dH * 0.3},  // f: TL (in slightly)
+      {x: dW * 0.5,  y: dH * 0.5}   // g: middle (dead center)
     ];
 
     const bits = pts.map(pt => {
@@ -160,7 +160,7 @@ let mergedBoxes = [];
       let blackPixels = 0;
       for (let ky = -2; ky <= 2; ky++) {
         for (let kx = -2; kx <= 2; kx++) {
-          if (roi.ucharAt(pxY + ky, pxX + kx) < 120) blackPixels++;
+          if (roi.ucharAt(pxY + ky, pxX + kx) < 140) blackPixels++;
         }
       }
 
@@ -183,28 +183,12 @@ let mergedBoxes = [];
     if (bits === "0110000" || bits === "0100000" || bits === "0010000") return "1";
 
     return "";
-
-    /*
-    const oldbits = pts.map(pt => {
-      const pxX = Math.round(x + pt.x);
-      const pxY = Math.round(y + pt.y);
-    
-      // Safety check
-      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
-
-      // Draw small dots in the debug view so you can see the "Bullseye"
-      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
-
-      // If the pixel is BLACK (< 120), the segment is ON
-      return roi.ucharAt(pxY, pxX) < 120 ? "1" : "0";
-    }).join("");
-    /////
-    // Add a "1" variation: some Omron 1s are so thin they only hit the Right segments
-    if (bits === "0110000" || bits === "0100000" || bits === "0010000") return "1";
-    return segMap[bits] ?? ""; 
-    */
   };
 
+  // Add this right before the digitBoxes.map(parseDigitBox) line
+  let kernel = cv.Mat.ones(2, 2, cv.CV_8U);
+  cv.erode(roi, roi, kernel); 
+  kernel.delete();
 
   readings.value.sys = sysGroup.map(parseDigitBox).join("");
   readings.value.dia = diaGroup.map(parseDigitBox).join("");
