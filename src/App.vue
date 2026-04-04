@@ -247,6 +247,7 @@ let mergedBoxes = [];
     const dia = await parseAll(diaGroup);
     const pulse = await parseAll(pulGroup);
     // Only update if we actually found something
+    readings.value = { sys, dia, pulse };
     if (sys || dia) {
       readings.value = { sys, dia, pulse };
       status.value = "Scan successful!";
