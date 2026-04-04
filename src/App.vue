@@ -1,22 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 
-const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY'
-const segmentMap = {
-  "1111110": 0, 
-  "0110000": 1, // Traditional 1 (TR, BR)
-  "0010000": 1, // Faint 1 (Only BR)
-  "0100000": 1, 
-  "1101101": 2, 
-  "1111001": 3, 
-  "0110011": 4,
-  "1011011": 5, 
-  "1011111": 6, 
-  "1110000": 7, 
-  "1111111": 8, 
-  "1111011": 9
-}
-
 const video = ref(null)
 const debugCanvas = ref(null)
 const status = ref('Loading OpenCV...')
@@ -51,6 +35,34 @@ const runLoop = () => {
   if (!isLive.value) return
   processFrame()
   requestAnimationFrame(runLoop)
+}
+const mergeAdjacentVerticalBoxes = (digitBoxes) => {
+  let mergedBoxes = [];
+    digitBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find neighbors
+
+  for (let i = 0; i < digitBoxes.length; i++) {
+    let current = digitBoxes[i];
+    let merged = false;
+
+    for (let j = 0; j < mergedBoxes.length; j++) {
+      let prev = mergedBoxes[j];
+      
+      // Check if they are horizontally aligned (same X) and vertically close
+      const horizontalOverlap = Math.abs(current.x - prev.x) < (scanSize * 0.05);
+      const verticalGap = current.y - (prev.y + prev.height);
+
+      if (horizontalOverlap && verticalGap < (current.height * 1.5)) {
+        // Merge the two boxes into one tall one
+        prev.y = Math.min(prev.y, current.y);
+        prev.height = Math.max(prev.y + prev.height, current.y + current.height) - prev.y;
+        prev.width = Math.max(prev.width, current.width);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) mergedBoxes.push(current);
+  }
+  return mergedBoxes;
 }
 
 const processFrame = () => {
@@ -99,6 +111,9 @@ const processFrame = () => {
     }
   }
 //merge adjacent vertical boxes
+digitBoxes = mergeAdjacentVerticalBoxes(digitBoxes);
+
+/*
 let mergedBoxes = [];
   digitBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find neighbors
 
@@ -126,7 +141,7 @@ let mergedBoxes = [];
   }
   // Now use mergedBoxes for the rest of your row grouping
   digitBoxes = mergedBoxes;
-
+  */
 
   // 5. ROW GROUPING (SYS/DIA/PULSE)
   // Group digits into 3 rows based on their Y coordinate
@@ -142,18 +157,6 @@ let mergedBoxes = [];
   // Sort each row Left-to-Right
   const sortX = (a, b) => a.x - b.x;
   sysGroup.sort(sortX); diaGroup.sort(sortX); pulGroup.sort(sortX);
-
-  const parse = (box) => {
-    // Check segments in the original ROI (which isn't dilated)
-    const { x, y, width: dW, height: dH } = box;
-    const pts = [
-      {x: dW/2, y: dH*0.15}, {x: dW*0.85, y: dH*0.3}, {x: dW*0.85, y: dH*0.7},
-      {x: dW/2, y: dH*0.85}, {x: dW*0.15, y: dH*0.7}, {x: dW*0.15, y: dH*0.3},
-      {x: dW/2, y: dH/2}
-    ];
-    const bits = pts.map(pt => roi.ucharAt(Math.round(y + pt.y), Math.round(x + pt.x)) < 120 ? "1" : "0").join("");
-    return segmentMap[bits] ?? "";
-  };
 
   const parseDigitBox = (rect) => {
     const segMap = {
@@ -209,7 +212,7 @@ let mergedBoxes = [];
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA reco 1</h3>
+    <h3>Omron M3 OpenCV PWA reco 2</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
