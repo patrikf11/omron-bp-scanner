@@ -36,34 +36,6 @@ const runLoop = () => {
   processFrame()
   requestAnimationFrame(runLoop)
 }
-const mergeAdjacentVerticalBoxes = (digitBoxes) => {
-  let mergedBoxes = [];
-    digitBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find neighbors
-
-  for (let i = 0; i < digitBoxes.length; i++) {
-    let current = digitBoxes[i];
-    let merged = false;
-
-    for (let j = 0; j < mergedBoxes.length; j++) {
-      let prev = mergedBoxes[j];
-      
-      // Check if they are horizontally aligned (same X) and vertically close
-      const horizontalOverlap = Math.abs(current.x - prev.x) < (scanSize * 0.05);
-      const verticalGap = current.y - (prev.y + prev.height);
-
-      if (horizontalOverlap && verticalGap < (current.height * 1.5)) {
-        // Merge the two boxes into one tall one
-        prev.y = Math.min(prev.y, current.y);
-        prev.height = Math.max(prev.y + prev.height, current.y + current.height) - prev.y;
-        prev.width = Math.max(prev.width, current.width);
-        merged = true;
-        break;
-      }
-    }
-    if (!merged) mergedBoxes.push(current);
-  }
-  return mergedBoxes;
-}
 
 const processFrame = () => {
   const cv = window.cv;
@@ -110,10 +82,8 @@ const processFrame = () => {
       cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), new cv.Scalar(150), 1);
     }
   }
+
 //merge adjacent vertical boxes
-//digitBoxes = mergeAdjacentVerticalBoxes(digitBoxes);
-
-
 let mergedBoxes = [];
   digitBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find neighbors
 
