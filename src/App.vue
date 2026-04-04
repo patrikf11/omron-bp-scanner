@@ -268,7 +268,7 @@ const saveToCloud = async () => {
 .app { font-family: sans-serif; text-align: center; max-width: 450px; margin: auto; padding: 10px; }
 .video-container { position: relative; border-radius: 12px; overflow: hidden; background: #000; }
 video { width: 100%; display: block; }
-scan-overlay { 
+.scan-overlay { 
   position: absolute; 
   /* Centering a 18% square */
   top: 41%; bottom: 41%; 
