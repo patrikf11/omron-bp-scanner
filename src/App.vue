@@ -134,17 +134,20 @@ let mergedBoxes = [];
       "1011011": "5", "1011111": "6", "1110000": "7", "1111111": "8", "1111011": "9"
     };
     const { x, y, width: dW, height: dH } = rect;
-  
+    //if box is narrow it can only be digit 1 no need to parse that numner
+    if (dW < dH * 0.35) {
+    return "1";
+    }
+
     // Define 7 points relative to THIS specific box
-    // We move the 'X' points closer to the right because "1" is only on the right side
     const pts = [
-      {x: dW * 0.5,  y: dH * 0.1}, // a: top
-      {x: dW * 0.85, y: dH * 0.25},// b: top-right
-      {x: dW * 0.85, y: dH * 0.75},// c: bottom-right
-      {x: dW * 0.5,  y: dH * 0.9}, // d: bottom
-      {x: dW * 0.15, y: dH * 0.75},// e: bottom-left
-      {x: dW * 0.15, y: dH * 0.25},// f: top-left
-      {x: dW * 0.5,  y: dH * 0.5}  // g: middle
+      {x: dW * 0.5,  y: dH * 0.1},  // a: top
+      {x: dW * 0.9,  y: dH * 0.25}, // b: top-right
+      {x: dW * 0.9,  y: dH * 0.75}, // c: bottom-right
+      {x: dW * 0.5,  y: dH * 0.9},  // d: bottom
+      {x: dW * 0.1,  y: dH * 0.75}, // e: bottom-left
+      {x: dW * 0.1,  y: dH * 0.25}, // f: top-left
+      {x: dW * 0.5,  y: dH * 0.5}   // g: middle
     ];
 
     const bits = pts.map(pt => {
@@ -165,7 +168,7 @@ let mergedBoxes = [];
       cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
 
       // If more than 25% of the 25 pixels are black, segment is ON
-      return blackPixels > 6 ? "1" : "0";
+      return blackPixels > 10 ? "1" : "0";
     }).join("");
 
     // --- THE RETURN LOGIC ---
