@@ -44,48 +44,62 @@ const runLoop = () => {
 }
 
 const processFrame = () => {
-  const cv = window.cv
-  if (!video.value || video.value.readyState < 2) return
+  const cv = window.cv;
+  // 1. SAFETY CHECK: Ensure video is actually playing and has data
+  if (!video.value || video.value.readyState < 2 || video.value.paused) return;
 
-  const src = cv.imread(video.value)
-  const dst = new cv.Mat()
+  const src = cv.imread(video.value);
+  const gray = new cv.Mat();
+  const binary = new cv.Mat();
   
-  // 1. Grayscale + Adaptive Threshold (Fixes black screen/glare)
-  cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY)
-  cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2)
+  // 2. CONVERT TO GRAYSCALE
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  
+  // 3. AUTO-THRESHOLD: Use OTSU to find the best light level automatically
+  // This prevents the "all black" screen issue
+  cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
 
-  // 2. Define ROI (Center 50%)
-  const w = dst.cols * 0.5, h = dst.rows * 0.5
-  const roi = dst.roi(new cv.Rect(dst.cols * 0.25, dst.rows * 0.25, w, h))
+  // 4. DEFINE ROI (Center Window)
+  const w = binary.cols * 0.5, h = binary.rows * 0.5;
+  const roi = binary.roi(new cv.Rect(binary.cols * 0.25, binary.rows * 0.25, w, h));
 
-  const dW = w * 0.20, dH = h * 0.22
+  // 5. DIGIT ANALYSIS
+  const dW = w * 0.20, dH = h * 0.22;
   const getDigit = (col, row) => {
-    const dX = Math.round((w * 0.15) + (col * dW))
-    const dY = Math.round((h * 0.10) + (row * h * 0.30))
+    const dX = Math.round((w * 0.15) + (col * dW));
+    const dY = Math.round((h * 0.10) + (row * h * 0.30));
     
     const pts = [
       {x: dW/2, y: 0}, {x: dW*0.9, y: dH*0.25}, {x: dW*0.9, y: dH*0.75},
       {x: dW/2, y: dH}, {x: dW*0.1, y: dH*0.75}, {x: dW*0.1, y: dH*0.25},
       {x: dW/2, y: dH/2}
-    ]
+    ];
 
     const bits = pts.map(pt => {
-      const val = roi.ucharAt(Math.round(dY + pt.y), Math.round(dX + pt.x))
-      cv.circle(roi, new cv.Point(Math.round(dX + pt.x), Math.round(dY + pt.y)), 2, new cv.Scalar(255), -1)
-      return val < 128 ? "1" : "0" // Black pixel = segment ON
-    }).join("")
+      const pxY = Math.min(Math.round(dY + pt.y), roi.rows - 1);
+      const pxX = Math.min(Math.round(dX + pt.x), roi.cols - 1);
+      const val = roi.ucharAt(pxY, pxX);
+      
+      // Draw visible white dots (255) for alignment
+      cv.circle(roi, new cv.Point(pxX, pxY), 2, new cv.Scalar(255), -1);
+      return val < 128 ? "1" : "0"; 
+    }).join("");
 
-    return segmentMap[bits] ?? ""
-  }
+    return segmentMap[bits] ?? "";
+  };
 
-  // 3. Extract Readings
-  readings.value.sys = `${getDigit(0, 0)}${getDigit(1, 0)}${getDigit(2, 0)}`
-  readings.value.dia = `${getDigit(0, 1)}${getDigit(1, 1)}${getDigit(2, 1)}`
-  readings.value.pulse = `${getDigit(0, 2)}${getDigit(1, 2)}${getDigit(2, 2)}`
+  // EXTRACT READINGS
+  readings.value.sys = `${getDigit(0, 0)}${getDigit(1, 0)}${getDigit(2, 0)}`;
+  readings.value.dia = `${getDigit(0, 1)}${getDigit(1, 1)}${getDigit(2, 1)}`;
+  readings.value.pulse = `${getDigit(0, 2)}${getDigit(1, 2)}${getDigit(2, 2)}`;
 
-  cv.imshow(debugCanvas.value, roi)
-  src.delete(); dst.delete(); roi.delete()
-}
+  // SHOW OUTPUT
+  cv.imshow(debugCanvas.value, roi);
+
+  // CLEANUP (Crucial for mobile memory)
+  src.delete(); gray.delete(); binary.delete(); roi.delete();
+};
+
 
 const saveToCloud = async () => {
   status.value = "Uploading..."
@@ -103,7 +117,7 @@ const saveToCloud = async () => {
 
 <template>
   <div class="app">
-    <h2>Omron M3 OpenCV PWA live</h2>
+    <h2>Omron M3 OpenCV PWA live2</h2>
     
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
