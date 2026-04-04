@@ -64,10 +64,10 @@ const processFrame = () => {
   
   // 2. CONVERT TO GRAYSCALE
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  
-  // 3. AUTO-THRESHOLD: Use OTSU to find the best light level automatically
-  // This prevents the "all black" screen issue
-  cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
+
+  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+  cv.threshold(gray, gray, 80, 255, cv.THRESH_BINARY);
+  //cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
 
   // 4. DEFINE ROI (Center Window)
   const w = binary.cols * 0.5, h = binary.rows * 0.5;
@@ -80,42 +80,48 @@ const processFrame = () => {
   
   const getDigit = (col, row) => {
     // Positioning the 3x3 grid of digits
-    const dX = Math.round((w * 0.18) + (col * dW * 1.2)); 
-    const dY = Math.round((h * 0.10) + (row * h * 0.30));
+    const getDigit = (col, row) => {
+  // 1. Positioning the digit slots
+  const dX = Math.round((w * 0.18) + (col * dW * 1.2)); 
+  const dY = Math.round((h * 0.12) + (row * h * 0.30));
+  
+  // 2. The 7 sensors (a-g) shifted inward to avoid "bleeding" edges
+  const pts = [
+    {x: dW/2, y: dH*0.15}, // a: top
+    {x: dW*0.8, y: dH*0.3},  // b: top-right
+    {x: dW*0.8, y: dH*0.7},  // c: bottom-right
+    {x: dW/2, y: dH*0.85}, // d: bottom
+    {x: dW*0.2, y: dH*0.7},  // e: bottom-left
+    {x: dW*0.2, y: dH*0.3},  // f: top-left
+    {x: dW/2, y: dH/2}      // g: middle
+  ];
+
+  const bits = pts.map(pt => {
+    const pxY = Math.round(dY + pt.y);
+    const pxX = Math.round(dX + pt.x);
     
-    // The 7 sensors (Top, TR, BR, Bottom, BL, TL, Middle)
-    // We move them slightly INWARD to avoid the edges of the segments
-    const pts = [
-      {x: dW/2, y: dH*0.15}, // a: top
-      {x: dW*0.8, y: dH*0.3},  // b: top-right
-      {x: dW*0.8, y: dH*0.7},  // c: bottom-right
-      {x: dW/2, y: dH*0.85}, // d: bottom
-      {x: dW*0.2, y: dH*0.7},  // e: bottom-left
-      {x: dW*0.2, y: dH*0.3},  // f: top-left
-      {x: dW/2, y: dH/2}      // g: middle
-    ];
+    // Safety check for ROI boundaries
+    if (pxY < 0 || pxY >= roi.rows || pxX < 0 || pxX >= roi.cols) return "0";
 
-    const bits = pts.map(pt => {
-      const pxY = Math.round(dY + pt.y);
-      const pxX = Math.round(dX + pt.x);
-      
-      // Safety check for canvas boundaries
-      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
-      
-      const val = roi.ucharAt(pxY, pxX);
-      
-      // Draw the sensor dot on the debug view
-      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+    // Draw the sensor dot on the debug view for you to see
+    cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
 
-      // --- THE FIX ---
-      // If numbers are BLACK on white background: use val < 120
-      // If numbers are WHITE on black background: use val > 120
-      const isSegmentOn = val < 120 ? "1" : "0"; 
-      return isSegmentOn;
-    }).join("");
+    // 3. 3x3 AREA SAMPLE: Only trigger "1" if at least 5 pixels in the block are dark
+    let darkCount = 0;
+    for(let i = -1; i <= 1; i++) {
+      for(let j = -1; j <= 1; j++) {
+        // Checking pixel at (y+i, x+j). 100 is the dark-grey threshold.
+        if (roi.ucharAt(pxY + i, pxX + j) < 100) darkCount++;
+      }
+    }
+    
+    return darkCount >= 5 ? "1" : "0"; 
+  }).join("");
 
-    return segmentMap[bits] ?? ""; // Returns empty string if it's just background noise
-  };
+  // 4. Return the digit from the map, or empty string if it doesn't match
+  return segmentMap[bits] ?? "";
+};
+
   /** */
 
   // EXTRACT READINGS
@@ -147,7 +153,7 @@ const saveToCloud = async () => {
 
 <template>
   <div class="app">
-    <h2>Omron M3 OpenCV PWA live3</h2>
+    <h2>Omron M3 OpenCV PWA live4</h2>
     
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
