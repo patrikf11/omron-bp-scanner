@@ -119,6 +119,7 @@ const processFrame = async () => {
   
   let digitBoxes = [];
   for (let i = 0; i < contours.size(); ++i) {
+    alert(i);
     let rect = cv.boundingRect(contours.get(i));
     // 4. RELAXED FILTER: Accept thinner (the "1") and smaller digits
     //if (rect.height > 15 && rect.height < (scanSize * 0.5)) {
