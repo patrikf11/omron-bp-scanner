@@ -53,6 +53,36 @@ const runLoop = () => {
   requestAnimationFrame(runLoop)
 }
 //
+
+const mergeBoxes = (digitBoxes) =>{
+ let mergedBoxes = [];
+  digitBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find neighbors
+
+  for (let i = 0; i < digitBoxes.length; i++) {
+    let current = digitBoxes[i];
+    let merged = false;
+
+    for (let j = 0; j < mergedBoxes.length; j++) {
+      let prev = mergedBoxes[j];
+      
+      // Check if they are horizontally aligned (same X) and vertically close
+      const horizontalOverlap = Math.abs(current.x - prev.x) < (scanSize * 0.05);
+      const verticalGap = current.y - (prev.y + prev.height);
+
+      if (horizontalOverlap && verticalGap < (current.height * 1.5)) {
+        // Merge the two boxes into one tall one
+        prev.y = Math.min(prev.y, current.y);
+        prev.height = Math.max(prev.y + prev.height, current.y + current.height) - prev.y;
+        prev.width = Math.max(prev.width, current.width);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) mergedBoxes.push(current);
+  }
+  return mergedBoxes;
+}
+
 const processFrame = () => {
   const cv = window.cv;
   if (!video.value || video.value.readyState < 2) return;
@@ -98,7 +128,9 @@ const processFrame = () => {
       cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), new cv.Scalar(150), 1);
     }
   }
-
+  // merge adjacent boxes
+  digitBoxes = mergeBoxes(digitBoxes);
+  
   // 5. ROW GROUPING (SYS/DIA/PULSE)
   // Group digits into 3 rows based on their Y coordinate
   const rowThreshold = scanSize * 0.25; 
@@ -109,6 +141,7 @@ const processFrame = () => {
     else if (box.y < rowThreshold * 2.2) diaGroup.push(box);
     else pulGroup.push(box);
   });
+  
 
   // Sort each row Left-to-Right
   const sortX = (a, b) => a.x - b.x;
@@ -248,92 +281,7 @@ const processFramed1 = () => {
   src.delete(); gray.delete(); binary.delete(); roi.delete(); inverted.delete();
   contours.delete(); hierarchy.delete();
 };
-//
-const processFrameOld = () => {
-  const cv = window.cv;
-  if (!video.value || video.value.readyState < 2 || video.value.paused) return;
 
-  // 1. Capture to Temp Canvas
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = video.value.videoWidth;
-  tempCanvas.height = video.value.videoHeight;
-  const tempCtx = tempCanvas.getContext('2d');
-  tempCtx.drawImage(video.value, 0, 0);
-
-  // 2. Load into OpenCV & Pre-process
-  const src = cv.imread(tempCanvas);
-  const gray = new cv.Mat();
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  
-  // High contrast for grey LCD
-  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
-  cv.threshold(gray, gray, 110, 255, cv.THRESH_BINARY); 
-
-  // 3. Define Square ROI (50% of width)
-  const vW = gray.cols;
-  const vH = gray.rows;
-  const scanSize = vW * 0.28; 
-  const startX = (vW - scanSize) / 2;
-  const startY = (vH - scanSize) / 2;
-  
-  const roi = gray.roi(new cv.Rect(startX, startY, scanSize, scanSize));
-  const w = scanSize;
-  const h = scanSize;
-
-  // 4. Proportions (37% / 38% / 25%)
-  const sysRowH = h * 0.37;
-  const diaRowH = h * 0.38;
-  const pulseRowH = h * 0.25;
-  const dW = w * 0.22; // Slot width
-  const dH = h * 0.20; // Slot height
-
-  const getDigit = (col, row) => {
-    // Horizontal spacing
-    const dX = Math.round((w * 0.15) + (col * dW * 1.3));
-    
-    // Vertical spacing logic
-    let dY = 0;
-    if (row === 0) dY = Math.round(sysRowH * 0.1);
-    else if (row === 1) dY = Math.round(sysRowH + (diaRowH * 0.1));
-    else dY = Math.round(sysRowH + diaRowH + (pulseRowH * 0.1));
-    
-    // Draw guide box for user
-    cv.rectangle(roi, new cv.Point(dX, dY), new cv.Point(dX + dW, dY + dH), new cv.Scalar(180), 1);
-
-    // 7 Sensors
-    const pts = [
-      {x: dW/2, y: dH*0.15}, {x: dW*0.8, y: dH*0.3}, {x: dW*0.8, y: dH*0.7},
-      {x: dW/2, y: dH*0.85}, {x: dW*0.2, y: dH*0.7}, {x: dW*0.2, y: dH*0.3},
-      {x: dW/2, y: dH/2}
-    ];
-
-    const bits = pts.map(pt => {
-      const pxX = Math.round(dX + pt.x), pxY = Math.round(dY + pt.y);
-      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
-      
-      let darkCount = 0;
-      for(let i=-1; i<=1; i++){
-        for(let j=-1; j<=1; j++){
-          if (roi.ucharAt(pxY+i, pxX+j) < 120) darkCount++;
-        }
-      }
-      // Visible red-style dots in debug
-      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
-      return darkCount >= 5 ? "1" : "0";
-    }).join("");
-
-    return segmentMap[bits] ?? "";
-  };
-
-  // 5. Update Readings
-  readings.value.sys = `${getDigit(0, 0)}${getDigit(1, 0)}${getDigit(2, 0)}`;
-  readings.value.dia = `${getDigit(0, 1)}${getDigit(1, 1)}${getDigit(2, 1)}`;
-  readings.value.pulse = `${getDigit(0, 2)}${getDigit(1, 2)}${getDigit(2, 2)}`;
-
-  // 6. Show Debug & Cleanup (VERY IMPORTANT to delete Mats)
-  cv.imshow(debugCanvas.value, roi);
-  src.delete(); gray.delete(); roi.delete();
-};
 </script>
 
 
