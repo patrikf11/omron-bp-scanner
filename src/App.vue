@@ -57,6 +57,91 @@ const processFrame = () => {
   const src = cv.imread(tempCanvas);
   const gray = new cv.Mat();
   const binary = new cv.Mat();
+   
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+
+  // 1. ADAPTIVE THRESHOLD (Keep it strict)
+  cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 15);
+
+  const scanSize = binary.cols * 0.28;
+  const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
+
+  // 2. DILATION: Fatten the black segments so they touch
+  // This turns a "broken" 8 into a solid 8
+  let M = cv.Mat.ones(2, 2, cv.CV_8U);
+  let inverted = new cv.Mat();
+  cv.bitwise_not(roi, inverted); // Invert so digits are white for dilation
+  cv.dilate(inverted, inverted, M);
+
+  // 3. FIND CONTOURS on the "fattened" digits
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
+  cv.findContours(inverted, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  let digitBoxes = [];
+  for (let i = 0; i < contours.size(); ++i) {
+    let rect = cv.boundingRect(contours.get(i));
+    // 4. RELAXED FILTER: Accept thinner (the "1") and smaller digits
+    if (rect.height > 15 && rect.height < (scanSize * 0.5)) {
+      digitBoxes.push(rect);
+      cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), new cv.Scalar(150), 1);
+    }
+  }
+
+  // 5. ROW GROUPING (SYS/DIA/PULSE)
+  // Group digits into 3 rows based on their Y coordinate
+  const rowThreshold = scanSize * 0.25; 
+  let sysGroup = [], diaGroup = [], pulGroup = [];
+
+  digitBoxes.forEach(box => {
+    if (box.y < rowThreshold) sysGroup.push(box);
+    else if (box.y < rowThreshold * 2.2) diaGroup.push(box);
+    else pulGroup.push(box);
+  });
+
+  // Sort each row Left-to-Right
+  const sortX = (a, b) => a.x - b.x;
+  sysGroup.sort(sortX); diaGroup.sort(sortX); pulGroup.sort(sortX);
+
+  const parse = (box) => {
+    // Check segments in the original ROI (which isn't dilated)
+    const { x, y, width: dW, height: dH } = box;
+    const pts = [
+      {x: dW/2, y: dH*0.15}, {x: dW*0.85, y: dH*0.3}, {x: dW*0.85, y: dH*0.7},
+      {x: dW/2, y: dH*0.85}, {x: dW*0.15, y: dH*0.7}, {x: dW*0.15, y: dH*0.3},
+      {x: dW/2, y: dH/2}
+    ];
+    const bits = pts.map(pt => roi.ucharAt(Math.round(y + pt.y), Math.round(x + pt.x)) < 120 ? "1" : "0").join("");
+    return segmentMap[bits] ?? "";
+  };
+
+  readings.value.sys = sysGroup.map(parse).join("");
+  readings.value.dia = diaGroup.map(parse).join("");
+  readings.value.pulse = pulGroup.map(parse).join("");
+
+  cv.imshow(debugCanvas.value, roi);
+
+  // 6. CLEANUP
+  src.delete(); gray.delete(); binary.delete(); roi.delete(); 
+  inverted.delete(); contours.delete(); hierarchy.delete(); M.delete();
+};
+
+//
+const processFramed1 = () => {
+  const cv = window.cv;
+  if (!video.value || video.value.readyState < 2) return;
+
+  // 1. Precise Image Capture
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = video.value.videoWidth;
+  tempCanvas.height = video.value.videoHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(video.value, 0, 0);
+
+  const src = cv.imread(tempCanvas);
+  const gray = new cv.Mat();
+  const binary = new cv.Mat();
   
   // 2. CONVERT & ENHANCE CONTRAST
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
@@ -213,7 +298,7 @@ const processFrameOld = () => {
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA dyn2</h3>
+    <h3>Omron M3 OpenCV PWA dyn3</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
