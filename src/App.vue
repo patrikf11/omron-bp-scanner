@@ -3,19 +3,9 @@ import { ref, onMounted } from 'vue'
 
 const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY'
 const segmentMap = {
-  "1111110": 0, 
-  "0110000": 1, // Traditional 1 (TR, BR)
-  "0010000": 1, // Faint 1 (Only BR)
-  "0100000": 1, 
-  "1101101": 2, 
-  "1111001": 3, 
-  "0110011": 4,
-  "1011011": 5, 
-  "1011111": 6, 
-  "1110000": 7, 
-  "1111111": 8, 
-  "1111011": 9
-}
+  "1111110": "0", "0110000": "1", "1101101": "2", "1111001": "3", "0110011": "4",
+  "1011011": "5", "1011111": "6", "1110000": "7", "1111111": "8", "1111011": "9"
+};
 
 const video = ref(null)
 const debugCanvas = ref(null)
@@ -126,9 +116,38 @@ const processFrame = () => {
     return segmentMap[bits] ?? "";
   };
 
-  readings.value.sys = sysGroup.map(parse).join("");
-  readings.value.dia = diaGroup.map(parse).join("");
-  readings.value.pulse = pulGroup.map(parse).join("");
+  const parseDigitBox = (rect) => {
+  const { x, y, width: dW, height: dH } = rect;
+  
+  // Define 7 points relative to THIS specific box
+  // We move the 'X' points closer to the right because "1" is only on the right side
+  const pts = [
+    {x: dW * 0.5,  y: dH * 0.1}, // a: top
+    {x: dW * 0.85, y: dH * 0.25},// b: top-right
+    {x: dW * 0.85, y: dH * 0.75},// c: bottom-right
+    {x: dW * 0.5,  y: dH * 0.9}, // d: bottom
+    {x: dW * 0.15, y: dH * 0.75},// e: bottom-left
+    {x: dW * 0.15, y: dH * 0.25},// f: top-left
+    {x: dW * 0.5,  y: dH * 0.5}  // g: middle
+  ];
+
+  const bits = pts.map(pt => {
+    const pxX = Math.round(x + pt.x);
+    const pxY = Math.round(y + pt.y);
+    
+    // Safety check
+    if (pxY >= roi.rows || pxX >= roi.cols) return "0";
+
+    // Draw small white dots in the debug view so you can see the "Bullseye"
+    cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+
+    // If the pixel is BLACK (< 120), the segment is ON
+    return roi.ucharAt(pxY, pxX) < 120 ? "1" : "0";
+  }).join("");
+
+  readings.value.sys = sysGroup.map(parseDigitBox).join("");
+  readings.value.dia = diaGroup.map(parseDigitBox).join("");
+  readings.value.pulse = pulGroup.map(parseDigitBox).join("");
 
   cv.imshow(debugCanvas.value, roi);
 
