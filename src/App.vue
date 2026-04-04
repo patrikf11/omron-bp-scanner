@@ -46,9 +46,19 @@ const runLoop = () => {
 const processFrame = () => {
   const cv = window.cv;
   // 1. SAFETY CHECK: Ensure video is actually playing and has data
-  if (!video.value || video.value.readyState < 2 || video.value.paused) return;
+  if (!video.value || video.value.readyState < 2 || video.value.paused || video.value.ended) return;
 
-  const src = cv.imread(video.value);
+  // Use a temporary canvas to 'capture' the frame first
+  // This is often more reliable than reading the video element directly.
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = video.value.videoWidth;
+  tempCanvas.height = video.value.videoHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(video.value, 0, 0);
+
+
+
+  const src = cv.imread(tempCanvas);
   const gray = new cv.Mat();
   const binary = new cv.Mat();
   
@@ -117,7 +127,7 @@ const saveToCloud = async () => {
 
 <template>
   <div class="app">
-    <h2>Omron M3 OpenCV PWA live2</h2>
+    <h2>Omron M3 OpenCV PWA live3</h2>
     
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
