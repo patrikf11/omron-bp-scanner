@@ -40,8 +40,104 @@ const runLoop = () => {
   processFrame()
   requestAnimationFrame(runLoop)
 }
-
 const processFrame = () => {
+  const cv = window.cv;
+  if (!video.value || video.value.readyState < 2 || video.value.paused) return;
+
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = video.value.videoWidth;
+  tempCanvas.height = video.value.videoHeight;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(video.value, 0, 0);
+
+  const src = cv.imread(tempCanvas);
+  const gray = new cv.Mat();
+  const binary = new cv.Mat();
+  
+  // 1. Convert & Stretch Contrast (Makes grey background go white, digits go black)
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+  
+  // 2. Strict Threshold: Adjust '100' if digits don't appear. 
+  // Lower (e.g. 80) if screen is too white. Higher (e.g. 130) if screen is too black.
+  cv.threshold(gray, binary, 100, 255, cv.THRESH_BINARY_INV); 
+
+  // 3. Define ROI (Matches your 28vw square)
+  const vW = binary.cols, vH = binary.rows;
+  const scanSize = vW * 0.28;
+  const roi = binary.roi(new cv.Rect((vW - scanSize)/2, (vH - scanSize)/2, scanSize, scanSize));
+
+  // 4. Find Contours (Looking for the white digits on black)
+  let contours = new cv.MatVector(), hierarchy = new cv.Mat();
+  cv.findContours(roi, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  let digitBoxes = [];
+  for (let i = 0; i < contours.size(); ++i) {
+    let rect = cv.boundingRect(contours.get(i));
+    // Filter: Omron digits are taller than they are wide.
+    if (rect.height > 15 && rect.height > rect.width) {
+      digitBoxes.push(rect);
+    }
+  }
+
+  // 5. Vertical Merger (To handle the "1" being split)
+  let merged = [];
+  digitBoxes.sort((a, b) => a.x - b.x);
+  for (let i = 0; i < digitBoxes.length; i++) {
+    let curr = digitBoxes[i], isAdded = false;
+    for (let j = 0; j < merged.length; j++) {
+      let prev = merged[j];
+      const hOverlap = Math.abs(curr.x - prev.x) < (scanSize * 0.05);
+      const vGap = curr.y - (prev.y + prev.height);
+      if (hOverlap && vGap < curr.height) {
+        prev.height = Math.max(prev.y + prev.height, curr.y + curr.height) - prev.y;
+        isAdded = true; break;
+      }
+    }
+    if (!isAdded) merged.push(curr);
+  }
+
+  // 6. Final Segment Mapping
+  const parseDigit = (rect) => {
+    const { x, y, width: dW, height: dH } = rect;
+    // Draw the green boxes for feedback
+    cv.rectangle(roi, new cv.Point(x, y), new cv.Point(x + dW, y + dH), new cv.Scalar(255), 1);
+    
+    const pts = [
+      {x: dW*0.5, y: dH*0.1}, {x: dW*0.85, y: dH*0.25}, {x: dW*0.85, y: dH*0.75},
+      {x: dW*0.5, y: dH*0.9}, {x: dW*0.15, y: dH*0.75}, {x: dW*0.15, y: dH*0.25},
+      {x: dW*0.5, y: dH*0.5}
+    ];
+
+    const bits = pts.map(pt => {
+      const pxX = Math.round(x + pt.x), pxY = Math.round(y + pt.y);
+      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
+      // Since background is black (0) and digits are white (255), check for > 128
+      return roi.ucharAt(pxY, pxX) > 128 ? "1" : "0";
+    }).join("");
+    
+    return segmentMap[bits] ?? "";
+  };
+
+  // Group by rows (37/38/25 split)
+  let sysRow = [], diaRow = [], pulRow = [];
+  merged.forEach(box => {
+    const cy = box.y + box.height/2;
+    if (cy < scanSize * 0.37) sysRow.push(box);
+    else if (cy < scanSize * 0.75) diaRow.push(box);
+    else pulRow.push(box);
+  });
+
+  const sortX = (a, b) => a.x - b.x;
+  readings.value.sys = sysRow.sort(sortX).map(parseDigit).join("");
+  readings.value.dia = diaRow.sort(sortX).map(parseDigit).join("");
+  readings.value.pulse = pulRow.sort(sortX).map(parseDigit).join("");
+
+  cv.imshow(debugCanvas.value, roi);
+  src.delete(); gray.delete(); binary.delete(); roi.delete(); contours.delete(); hierarchy.delete();
+};
+
+const processFrameX = () => {
   const cv = window.cv
   if (!video.value || video.value.readyState < 2 || video.value.paused) return
 
