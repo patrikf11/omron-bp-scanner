@@ -103,7 +103,7 @@ const saveToCloud = async () => {
 
 <template>
   <div class="app">
-    <h2>Omron M3 OpenCV PWA</h2>
+    <h2>Omron M3 OpenCV PWA live</h2>
     
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
