@@ -38,13 +38,20 @@ const startCamera = async () => {
 
 const scanReading = () => {
   const cv = window.cv
+  
+  if (video.value.readyState < 2) {
+    status.value = "Waiting for camera...";
+    return;
+  }
+
   const src = cv.imread(video.value)
   const dst = new cv.Mat()
   
   // 1. Process Image
   cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY)
-  cv.threshold(dst, dst, 110, 255, cv.THRESH_BINARY) 
-
+  // 2. Adjust Threshold (Try 100-127). Too high (e.g., 200) often results in a black screen.
+  cv.threshold(dst, dst, 127, 255, cv.THRESH_BINARY); 
+  
   // 2. Define ROI (50% center window)
   const w = dst.cols * 0.5, h = dst.rows * 0.5
   const roi = dst.roi(new cv.Rect(dst.cols * 0.25, dst.rows * 0.25, w, h))
@@ -99,7 +106,7 @@ const saveToCloud = async () => {
 
 <template>
   <div class="app">
-    <h2>Omron OpenCV Scanner</h2>
+    <h2>Omron OpenCV Scanner 2</h2>
     
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
