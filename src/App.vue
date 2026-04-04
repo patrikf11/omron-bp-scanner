@@ -66,7 +66,7 @@ const processFrame = () => {
   // 3. Define Square ROI (50% of width)
   const vW = gray.cols;
   const vH = gray.rows;
-  const scanSize = vW * 0.30; 
+  const scanSize = vW * 0.28; 
   const startX = (vW - scanSize) / 2;
   const startY = (vH - scanSize) / 2;
   
@@ -165,7 +165,7 @@ video { width: 100%; display: block; }
   left: 50%;
   transform: translate(-50%, -50%); /* Perfectly centers the square */
   
-  width: 30vw;             /* Use 50% of the screen width */
+  width: 28vw;             /* Use 50% of the screen width */
   aspect-ratio: 1 / 1;     /* Force it to be a square */
   
   border: 2px solid #00ff00; 
