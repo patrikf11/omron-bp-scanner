@@ -70,30 +70,29 @@ const runLoop = () => {
   cv.threshold(gray, gray, 80, 255, cv.THRESH_BINARY);
 
   // 4. Define ROI (Center Window)
-  const w = gray.cols * 0.5;
-  const h = gray.rows * 0.5;
-  const roi = gray.roi(new cv.Rect(gray.cols * 0.25, gray.rows * 0.25, w, h));
+  const w = gray.cols * 0.30;
+  const h = gray.rows * 0.40;
+  const roi = gray.roi(new cv.Rect(gray.cols * 0.35, gray.rows * 0.30, w, h));
 
   // 5. Digit Dimensions
-  const dW = w * 0.16;
+  const dW = w * 0.22;
   const dH = h * 0.22;
   
   // 6. The Helper Function
   const getDigit = (col, row) => {
-  const dX = Math.round((w * 0.15) + (col * dW * 1.3)); 
-  const dY = Math.round((h * 0.10) + (row * h * 0.32));
+  const dX = Math.round((w * 0.10) + (col * dW * 1.1)); 
+  const dY = Math.round((h * 0.05) + (row * h * 0.32));
   
   // 1. DRAW A GUIDING BOX for this digit slot
   // This helps you see if the Omron number is actually inside the "sensor zone"
   cv.rectangle(roi, 
     new cv.Point(dX, dY), 
     new cv.Point(dX + dW, dY + dH), 
-    new cv.Scalar(200), 1 // Grey border
+    new cv.Scalar(180), 1
   );
-
   const pts = [
-    {x: dW/2, y: dH*0.2},  {x: dW*0.8, y: dH*0.3}, {x: dW*0.8, y: dH*0.7},
-    {x: dW/2, y: dH*0.8},  {x: dW*0.2, y: dH*0.7}, {x: dW*0.2, y: dH*0.3},
+    {x: dW/2, y: dH*0.1}, {x: dW*0.85, y: dH*0.25}, {x: dW*0.85, y: dH*0.75},
+    {x: dW/2, y: dH*0.9}, {x: dW*0.15, y: dH*0.75}, {x: dW*0.15, y: dH*0.25},
     {x: dW/2, y: dH/2}
   ];
 
@@ -104,13 +103,13 @@ const runLoop = () => {
     if (pxY < 0 || pxY >= roi.rows || pxX < 0 || pxX >= roi.cols) return "0";
 
     // 2. DRAW SENSOR DOTS (Visible as dark grey/black dots on white)
-    cv.circle(roi, new cv.Point(pxX, pxY), 2, new cv.Scalar(50), -1);
+    cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(50), -1);
 
     let darkCount = 0;
     for(let i = -1; i <= 1; i++) {
       for (let j = -1; j <= 1; j++) {
         // Check if pixel is dark
-        if (roi.ucharAt(pxY + i, pxX + j) < 120) darkCount++;
+        if (roi.ucharAt(pxY + i, pxX + j) < 110) darkCount++;
       }
     }
     return darkCount >= 4 ? "1" : "0"; 
@@ -214,7 +213,9 @@ const saveToCloud = async () => {
 .video-container { position: relative; border-radius: 15px; overflow: hidden; background: #000; }
 video { width: 100%; display: block; }
 .scan-overlay { 
-  position: absolute; top: 25%; left: 25%; right: 25%; bottom: 25%; 
+  position: absolute; 
+  top: 30%; bottom: 30%; 
+  left: 35%; right: 35%; 
   border: 2px solid #00ff00; pointer-events: none;
   box-shadow: 0 0 0 1000px rgba(0,0,0,0.5);
 }
