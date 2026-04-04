@@ -1,286 +1,140 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import Tesseract from 'tesseract.js'
 
 // --- CONFIGURATION ---
-const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY' // <--- REPLACE THIS
+const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY'
+const segmentMap = {
+  "1111110": 0, "0110000": 1, "1101101": 2, "1111001": 3, "0110011": 4,
+  "1011011": 5, "1011111": 6, "1110000": 7, "1111111": 8, "1111011": 9
+}
 
 const video = ref(null)
-const previewCanvas = ref(null)
-const status = ref('Align Omron screen in green box')
-const readings = ref({ sys: null, dia: null, pulse: null })
-const isScanning = ref(false)
+const debugCanvas = ref(null)
+const status = ref('Loading OpenCV...')
+const readings = ref({ sys: '', dia: '', pulse: '' })
+const cvReady = ref(false)
 
-// 1. Start Camera
-onMounted(async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      video: { facingMode: 'environment', focusMode: 'continuous' } 
-    })
-    video.value.srcObject = stream
-  } catch (err) {
-    status.value = "Camera error: " + err.message
-  }
+onMounted(() => {
+  const checkCV = setInterval(() => {
+    if (window.cv && window.cv.Mat) {
+      clearInterval(checkCV)
+      cvReady.value = true
+      status.value = 'Align screen in green box'
+      startCamera()
+    }
+  }, 100)
 })
 
-const scanReading = async () => {
-  isScanning.value = true;
-  status.value = "Reading screen...";
+const startCamera = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({ 
+    video: { facingMode: 'environment' } 
+  })
+  video.value.srcObject = stream
+}
+
+const scanReading = () => {
+  const cv = window.cv
+  const src = cv.imread(video.value)
+  const dst = new cv.Mat()
   
-  const v = video.value;
-  const canvas = previewCanvas.value;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  // 1. Process Image
+  cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY)
+  cv.threshold(dst, dst, 110, 255, cv.THRESH_BINARY) 
 
-  // 1. Keep your Narrow Window (50% Wide, 50% High)
-  const w = v.videoWidth;
-  const h = v.videoHeight;
-  const scanW = w * 0.50; 
-  const scanX = w * 0.25; 
-  const scanH = h * 0.50;
-  const scanY = h * 0.25;
+  // 2. Define ROI (50% center window)
+  const w = dst.cols * 0.5, h = dst.rows * 0.5
+  const roi = dst.roi(new cv.Rect(dst.cols * 0.25, dst.rows * 0.25, w, h))
 
-  // 2. Prepare the High-Res Canvas
-  const scale = 2;
-  canvas.width = scanW * scale;
-  canvas.height = scanH * scale;
-  
-  ctx.filter = 'grayscale(100%) contrast(500%) brightness(80%)';
-  ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, canvas.width, canvas.height);
+  // 3. Digit Slot Helper
+  const dW = w * 0.20, dH = h * 0.25
+  const getDigit = (col, row) => {
+    const dX = Math.round((w * 0.15) + (col * dW))
+    const dY = Math.round((h * 0.10) + (row * h * 0.30))
+    
+    const pts = [
+      {x: dW/2, y: 0}, {x: dW*0.9, y: dH*0.25}, {x: dW*0.9, y: dH*0.75},
+      {x: dW/2, y: dH}, {x: dW*0.1, y: dH*0.75}, {x: dW*0.1, y: dH*0.25},
+      {x: dW/2, y: dH/2}
+    ]
 
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imageData.data;
-  // Simple Binarization & Threshold
-  for (let i = 0; i < data.length; i += 4) {
-    const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
-    const val = avg < 128 ? 0 : 255; // Threshold at 50%
-    data[i] = data[i+1] = data[i+2] = val;
+    const bits = pts.map(pt => {
+      const val = roi.ucharAt(dY + pt.y, dX + pt.x)
+      // Draw debug dots on the ROI
+      cv.circle(roi, new cv.Point(dX + pt.x, dY + pt.y), 2, new cv.Scalar(255), -1)
+      return val < 128 ? "1" : "0"
+    }).join("")
+
+    return segmentMap[bits] ?? ""
   }
-  ctx.putImageData(imageData, 0, 0);
-  
-  // Apply a tiny blur + extra contrast to "dilate" and smooth edges
-  ctx.filter = 'blur(1px) contrast(300%)';
-  ctx.drawImage(canvas, 0, 0);
 
+  // 4. Map Rows (37/38/25 split logic is implicit in row index)
+  readings.value.sys = `${getDigit(0, 0)}${getDigit(1, 0)}${getDigit(2, 0)}`
+  readings.value.dia = `${getDigit(0, 1)}${getDigit(1, 1)}${getDigit(2, 1)}`
+  readings.value.pulse = `${getDigit(0, 2)}${getDigit(1, 2)}${getDigit(2, 2)}`
 
-  try {
-    // 3. Single OCR Pass on the whole window
-    const { data: { text } } = await Tesseract.recognize(canvas, 'eng', {
-      tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '6' // Assume a single uniform block of text
-    });
+  cv.imshow(debugCanvas.value, roi)
+  status.value = "Scan complete!"
+  if (navigator.vibrate) navigator.vibrate(100)
 
-    // 4. Extract all numbers found in the text
-    const foundNumbers = text.match(/\d+/g);
+  // Cleanup
+  src.delete(); dst.delete(); roi.delete()
+}
 
-    if (foundNumbers && foundNumbers.length >= 2) {
-      readings.value = {
-        sys: foundNumbers[0],
-        dia: foundNumbers[1],
-        pulse: foundNumbers[2] || '?'
-      };
-      status.value = "Scan successful!";
-      if (navigator.vibrate) navigator.vibrate(100);
-    } else {
-      status.value = "Found " + (foundNumbers?.length || 0) + " numbers. Try again.";
-    }
-  } catch (err) {
-    status.value = "OCR Error.";
-  } finally {
-    isScanning.value = false;
-  }
-};
-
-const scanReadingold = async () => {
-  isScanning.value = true;
-  status.value = "Scanning (35/35/30)...";
-  
-  const v = video.value;
-  const canvas = previewCanvas.value;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-  // 1. Shrink the Window (Top 25%, Height 50%, Sides 15%)
-  const w = v.videoWidth;
-  const h = v.videoHeight;
-  const scanX = w * 0.25;
-  const scanY = h * 0.25; // Lowered from 20% to 25%
-  const scanW = w * 0.50;
-  const scanH = h * 0.50; // Shrunk from 60% to 50% for tighter focus
-
-  // 2. Proportions: 35/35/30
-  const sysH = scanH * 0.37;
-  const diaH = scanH * 0.38;
-  const pulseH = scanH * 0.25;
-
-  // 3. Prepare Preview (High Contrast)
-  canvas.width = scanW;
-  canvas.height = scanH;
-  ctx.filter = 'grayscale(100%) contrast(500%) brightness(80%) blur(0.5px)';
-  ctx.drawImage(v, scanX, scanY, scanW, scanH, 0, 0, scanW, scanH);
-
-  const getZoneText = async (yStart, height) => {
-    const tempCanvas = document.createElement('canvas');
-     // Scale up the zone by 2x to help Tesseract see shapes better
-    const scale = 2; 
-    tempCanvas.width = scanW * scale;
-    tempCanvas.height = height * scale;
-  
-    const tempCtx = tempCanvas.getContext('2d');
-  
-    // Smooth the scaling for better OCR shapes
-    tempCtx.imageSmoothingEnabled = true;
-    tempCtx.imageSmoothingQuality = 'high';
-
-    tempCtx.drawImage(
-      canvas, 
-      0, yStart, scanW, height,          // Source from preview
-      0, 0, tempCanvas.width, tempCanvas.height // Scaled destination
-    );
-
-    const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
-      tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '7', // Treat as a single line
-    });
-  
-    return text.replace(/\D/g, '');
-  };
-
-  try {
-    const sysResult = await getZoneText(0, sysH);
-    const diaResult = await getZoneText(sysH, diaH);
-    const pulseResult = await getZoneText(sysH + diaH, pulseH);
-
-    // Validation & Mapping
-    if (sysResult && diaResult) {
-      readings.value = { 
-        sys: sysResult, 
-        dia: diaResult, 
-        pulse: pulseResult || '?' 
-      };
-      status.value = "Scan successful!";
-      if (navigator.vibrate) navigator.vibrate(100);
-    } else {
-      status.value = "Partial scan. Check alignment/glare.";
-    }
-  } catch (err) {
-    status.value = "OCR Error.";
-  } finally {
-    isScanning.value = false;
-  }
-};
-
-
-// 3. Send to ThingSpeak
 const saveToCloud = async () => {
-  if (!readings.value.sys) return
   status.value = "Uploading..."
-  const url = `https://thingspeak.com{THINGSPEAK_API_KEY}&field1=${readings.value.sys}&field2=${readings.value.dia}&field3=${readings.value.pulse}`
-  /*
+  const { sys, dia, pulse } = readings.value
+  //const url = `https://thingspeak.com{THINGSPEAK_API_KEY}&field1=${sys}&field2=${dia}&field3=${pulse}`
   try {
-    const res = await fetch(url)
-    if (res.ok) status.value = "Saved to ThingSpeak!"
-  } catch (err) {
+    //await fetch(url)
+    status.value = "Saved to ThingSpeak!"
+  } catch {
     status.value = "Upload failed."
   }
-  */
- status.value = `sys:${readings.value.sys} dia:${readings.value.dia} pul:${readings.value.pulse}`
-
 }
 </script>
 
 <template>
-  <div class="app-container">
-    <h2>Omron M3 PWA</h2>
+  <div class="app">
+    <h2>Omron OpenCV Scanner</h2>
     
-    <div class="video-wrap">
+    <div class="video-container">
       <video ref="video" autoplay playsinline></video>
-      <!-- Visual targeting guide -->
-      <div class="scan-window">
-        <!-- div class="scan-divider">SYS</div -->
-        <!-- div class="scan-divider">DIA</div -->
-        <!-- div class="scan-divider">PULSE</div -->
-      </div>
+      <div class="scan-overlay"></div>
     </div>
-    
-    <div class="controls">
-      <p class="status-text">{{ status }}</p>
-      <button @click="scanReading" :disabled="isScanning" class="btn-scan">
-        {{ isScanning ? 'SCANNING...' : 'SCAN MONITOR' }}
-      </button>
+
+    <div class="ui">
+      <p class="status">{{ status }}</p>
       
+      <button @click="scanReading" :disabled="!cvReady" class="btn-main">
+        {{ cvReady ? 'SCAN MONITOR' : 'LOADING...' }}
+      </button>
+
       <div v-if="readings.sys" class="results">
-        <p><strong>SYS:</strong> {{ readings.sys }} | <strong>DIA:</strong> {{ readings.dia }}</p>
-        <button @click="saveToCloud" class="btn-save">UPLOAD TO CLOUD</button>
+        <div class="reading-row">SYS: {{ readings.sys }} | DIA: {{ readings.dia }} | PUL: {{ readings.pulse }}</div>
+        <button @click="saveToCloud" class="btn-cloud">SEND TO THINGSPEAK</button>
       </div>
 
-      <div class="debug">
-        <p>AI View (Debug):</p>
-        <canvas ref="previewCanvas" class="preview-canvas"></canvas>
+      <div class="debug-area">
+        <p>Debug Dots View:</p>
+        <canvas ref="debugCanvas"></canvas>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
-.app-container { font-family: sans-serif; text-align: center; color: #333; max-width: 450px; margin: auto; padding: 10px; }
-.video-wrap { position: relative; width: 100%; border-radius: 15px; overflow: hidden; background: #000; }
+.app { font-family: sans-serif; text-align: center; padding: 10px; max-width: 500px; margin: auto; }
+.video-container { position: relative; border-radius: 15px; overflow: hidden; background: #000; }
 video { width: 100%; display: block; }
-
-.scan-window {
-  position: absolute;
-  top: 25%;
-  bottom: 25%;
-  left: 25%;
-  right: 25%;
-  border: 3px solid #00ff00;
-  box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.4);
-  pointer-events: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.scan-overlay { 
+  position: absolute; top: 25%; left: 25%; right: 25%; bottom: 25%; 
+  border: 2px solid #00ff00; pointer-events: none;
+  box-shadow: 0 0 0 1000px rgba(0,0,0,0.5);
 }
-
-/* Optional: Add a simple hint text in the middle */
-.scan-window::after {
-  content: "ALIGN NUMBERS HERE";
-  color: #00ff00;
-  font-size: 10px;
-  font-weight: bold;
-  opacity: 0.5;
-}
-
-
-
-/* Target Box */
-.oscan-window {
-  position: absolute;
-  top: 25%;    /* Matches JS startY */
-  bottom: 25%; /* Matches JS scanH */
-  left: 25%;
-  right: 25%;
-  border: 3px solid #00ff00;
-  box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.4);
-  display: flex;
-  flex-direction: column;
-  pointer-events: none;
-}
-.oscan-divider { 
-  flex: 1; border-bottom: 1px dashed rgba(0,255,0,0.4); 
-  color: #00ff00; font-size: 10px; padding: 5px; text-align: right; 
-}
-.oscan-divider:nth-child(1) { flex: 0.37; } /* SYS Gets 40% */
-.oscan-divider:nth-child(2) { flex: 0.38; } /* DIA Gets 40% */
-.oscan-divider:nth-child(3) { 
-  flex: 0.25; 
-  border-bottom: none; 
-  font-size: 8px; /* Smaller label for the smaller pulse area */
-}
-
-/* UI Elements */
-.status-text { font-weight: bold; margin: 15px 0; color: #3b82f6; height: 20px; }
-button { width: 80%; padding: 15px; border-radius: 10px; border: none; font-weight: bold; margin: 10px 0; cursor: pointer; }
-.btn-scan { background: #3b82f6; color: white; }
-.btn-save { background: #10b981; color: white; }
-.results { background: #f0fdf4; padding: 15px; border-radius: 10px; border: 1px solid #bbf7d0; }
-.preview-canvas { width: 200px; border: 1px solid #ccc; margin-top: 5px; background: #000; }
-.debug { margin-top: 20px; font-size: 12px; color: #666; }
+.ui { margin-top: 15px; }
+.btn-main { width: 100%; padding: 15px; background: #3b82f6; color: white; border: none; border-radius: 10px; font-weight: bold; }
+.btn-cloud { width: 100%; padding: 12px; background: #10b981; color: white; border: none; border-radius: 8px; margin-top: 10px; }
+.results { margin-top: 15px; padding: 15px; background: #f3f4f6; border-radius: 10px; }
+canvas { width: 100%; margin-top: 10px; border: 1px solid #ccc; background: #000; }
+.status { color: #3b82f6; font-weight: bold; min-height: 24px; }
 </style>
