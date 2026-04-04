@@ -151,18 +151,55 @@ let mergedBoxes = [];
       const pxX = Math.round(x + pt.x);
       const pxY = Math.round(y + pt.y);
     
+      if (pxY >= roi.rows || pxX >= roi.cols || pxY < 0 || pxX < 0) return "0";
+
+      // --- AREA SAMPLING (5x5 grid) ---
+      let blackPixels = 0;
+      for (let ky = -2; ky <= 2; ky++) {
+        for (let kx = -2; kx <= 2; kx++) {
+          if (roi.ucharAt(pxY + ky, pxX + kx) < 120) blackPixels++;
+        }
+      }
+
+      // Draw the sensor dot for visual confirmation
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+
+      // If more than 25% of the 25 pixels are black, segment is ON
+      return blackPixels > 6 ? "1" : "0";
+    }).join("");
+
+    // --- THE RETURN LOGIC ---
+    // 1. Check the standard map
+    const detected = segMap[bits];
+    if (detected) return detected;
+
+    // 2. Fallback for "1": If the box is very narrow, it's a 1 even if sensors are slightly off
+    if (rect.width < rect.height * 0.35) return "1";
+
+    // 3. Fallback for common "noisy" 1 bitmasks
+    if (bits === "0110000" || bits === "0100000" || bits === "0010000") return "1";
+
+    return "";
+
+    /*
+    const oldbits = pts.map(pt => {
+      const pxX = Math.round(x + pt.x);
+      const pxY = Math.round(y + pt.y);
+    
       // Safety check
       if (pxY >= roi.rows || pxX >= roi.cols) return "0";
 
-      // Draw small red dots in the debug view so you can see the "Bullseye"
-      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(0,0,255,255), -1);
+      // Draw small dots in the debug view so you can see the "Bullseye"
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
 
       // If the pixel is BLACK (< 120), the segment is ON
       return roi.ucharAt(pxY, pxX) < 120 ? "1" : "0";
     }).join("");
+    /////
     // Add a "1" variation: some Omron 1s are so thin they only hit the Right segments
     if (bits === "0110000" || bits === "0100000" || bits === "0010000") return "1";
     return segMap[bits] ?? ""; 
+    */
   };
 
 
