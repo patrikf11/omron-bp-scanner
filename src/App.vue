@@ -43,99 +43,83 @@ const runLoop = () => {
   requestAnimationFrame(runLoop)
 }
 
-const processFrame = () => {
+/**
+ * 
+ * 
+ */
+ const processFrame = () => {
   const cv = window.cv;
-  // 1. SAFETY CHECK: Ensure video is actually playing and has data
   if (!video.value || video.value.readyState < 2 || video.value.paused || video.value.ended) return;
 
-  // Use a temporary canvas to 'capture' the frame first
-  // This is often more reliable than reading the video element directly.
+  // 1. Capture frame to temporary canvas
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = video.value.videoWidth;
   tempCanvas.height = video.value.videoHeight;
   const tempCtx = tempCanvas.getContext('2d');
   tempCtx.drawImage(video.value, 0, 0);
 
-
-
+  // 2. Load into OpenCV
   const src = cv.imread(tempCanvas);
   const gray = new cv.Mat();
-  const binary = new cv.Mat();
   
-  // 2. CONVERT TO GRAYSCALE
+  // 3. Pre-process
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
   cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
+  
+  // Apply threshold directly to gray to avoid Mat mismatch errors
   cv.threshold(gray, gray, 80, 255, cv.THRESH_BINARY);
-  //cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU);
 
-  // 4. DEFINE ROI (Center Window)
-  const w = binary.cols * 0.5, h = binary.rows * 0.5;
-  const roi = binary.roi(new cv.Rect(binary.cols * 0.25, binary.rows * 0.25, w, h));
+  // 4. Define ROI (Center Window)
+  const w = gray.cols * 0.5;
+  const h = gray.rows * 0.5;
+  const roi = gray.roi(new cv.Rect(gray.cols * 0.25, gray.rows * 0.25, w, h));
 
-  // 5. DIGIT ANALYSIS
-  /** */
-  const dW = w * 0.16; // Narrower slots to avoid touching neighboring digits
+  // 5. Digit Dimensions
+  const dW = w * 0.16;
   const dH = h * 0.22;
   
+  // 6. The Helper Function
   const getDigit = (col, row) => {
-    // Positioning the 3x3 grid of digits
-    const getDigit = (col, row) => {
-  // 1. Positioning the digit slots
-  const dX = Math.round((w * 0.18) + (col * dW * 1.2)); 
-  const dY = Math.round((h * 0.12) + (row * h * 0.30));
-  
-  // 2. The 7 sensors (a-g) shifted inward to avoid "bleeding" edges
-  const pts = [
-    {x: dW/2, y: dH*0.15}, // a: top
-    {x: dW*0.8, y: dH*0.3},  // b: top-right
-    {x: dW*0.8, y: dH*0.7},  // c: bottom-right
-    {x: dW/2, y: dH*0.85}, // d: bottom
-    {x: dW*0.2, y: dH*0.7},  // e: bottom-left
-    {x: dW*0.2, y: dH*0.3},  // f: top-left
-    {x: dW/2, y: dH/2}      // g: middle
-  ];
-
-  const bits = pts.map(pt => {
-    const pxY = Math.round(dY + pt.y);
-    const pxX = Math.round(dX + pt.x);
+    const dX = Math.round((w * 0.18) + (col * dW * 1.2)); 
+    const dY = Math.round((h * 0.12) + (row * h * 0.30));
     
-    // Safety check for ROI boundaries
-    if (pxY < 0 || pxY >= roi.rows || pxX < 0 || pxX >= roi.cols) return "0";
+    const pts = [
+      {x: dW/2, y: dH*0.15}, {x: dW*0.8, y: dH*0.3}, {x: dW*0.8, y: dH*0.7},
+      {x: dW/2, y: dH*0.85}, {x: dW*0.2, y: dH*0.7}, {x: dW*0.2, y: dH*0.3},
+      {x: dW/2, y: dH/2}
+    ];
 
-    // Draw the sensor dot on the debug view for you to see
-    cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+    const bits = pts.map(pt => {
+      const pxY = Math.round(dY + pt.y);
+      const pxX = Math.round(dX + pt.x);
+      
+      if (pxY < 0 || pxY >= roi.rows || pxX < 0 || pxX >= roi.cols) return "0";
 
-    // 3. 3x3 AREA SAMPLE: Only trigger "1" if at least 5 pixels in the block are dark
-    let darkCount = 0;
-    for(let i = -1; i <= 1; i++) {
-      for(let j = -1; j <= 1; j++) {
-        // Checking pixel at (y+i, x+j). 100 is the dark-grey threshold.
-        if (roi.ucharAt(pxY + i, pxX + j) < 100) darkCount++;
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+
+      let darkCount = 0;
+      for(let i = -1; i <= 1; i++) {
+        for(let j = -1; j <= 1; j++) {
+          if (roi.ucharAt(pxY + i, pxX + j) < 100) darkCount++;
+        }
       }
-    }
-    
-    return darkCount >= 5 ? "1" : "0"; 
-  }).join("");
+      return darkCount >= 5 ? "1" : "0"; 
+    }).join("");
 
-  // 4. Return the digit from the map, or empty string if it doesn't match
-  return segmentMap[bits] ?? "";
-};
+    return segmentMap[bits] ?? "";
+  };
 
-  /** */
-
-  // EXTRACT READINGS
+  // 7. Update Vue refs
   readings.value.sys = `${getDigit(0, 0)}${getDigit(1, 0)}${getDigit(2, 0)}`;
   readings.value.dia = `${getDigit(0, 1)}${getDigit(1, 1)}${getDigit(2, 1)}`;
   readings.value.pulse = `${getDigit(0, 2)}${getDigit(1, 2)}${getDigit(2, 2)}`;
 
-  // SHOW OUTPUT
+  // 8. Show output and Clean up memory
   cv.imshow(debugCanvas.value, roi);
-
-  // CLEANUP (Crucial for mobile memory)
-  src.delete(); gray.delete(); binary.delete(); roi.delete();
+  src.delete(); gray.delete(); roi.delete();
 };
 
+/** */
 
 const saveToCloud = async () => {
   status.value = "Uploading..."
