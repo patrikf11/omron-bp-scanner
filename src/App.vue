@@ -74,29 +74,49 @@ const processFrame = () => {
   const roi = binary.roi(new cv.Rect(binary.cols * 0.25, binary.rows * 0.25, w, h));
 
   // 5. DIGIT ANALYSIS
-  const dW = w * 0.20, dH = h * 0.22;
+  /** */
+  const dW = w * 0.16; // Narrower slots to avoid touching neighboring digits
+  const dH = h * 0.22;
+  
   const getDigit = (col, row) => {
-    const dX = Math.round((w * 0.15) + (col * dW));
+    // Positioning the 3x3 grid of digits
+    const dX = Math.round((w * 0.18) + (col * dW * 1.2)); 
     const dY = Math.round((h * 0.10) + (row * h * 0.30));
     
+    // The 7 sensors (Top, TR, BR, Bottom, BL, TL, Middle)
+    // We move them slightly INWARD to avoid the edges of the segments
     const pts = [
-      {x: dW/2, y: 0}, {x: dW*0.9, y: dH*0.25}, {x: dW*0.9, y: dH*0.75},
-      {x: dW/2, y: dH}, {x: dW*0.1, y: dH*0.75}, {x: dW*0.1, y: dH*0.25},
-      {x: dW/2, y: dH/2}
+      {x: dW/2, y: dH*0.15}, // a: top
+      {x: dW*0.8, y: dH*0.3},  // b: top-right
+      {x: dW*0.8, y: dH*0.7},  // c: bottom-right
+      {x: dW/2, y: dH*0.85}, // d: bottom
+      {x: dW*0.2, y: dH*0.7},  // e: bottom-left
+      {x: dW*0.2, y: dH*0.3},  // f: top-left
+      {x: dW/2, y: dH/2}      // g: middle
     ];
 
     const bits = pts.map(pt => {
-      const pxY = Math.min(Math.round(dY + pt.y), roi.rows - 1);
-      const pxX = Math.min(Math.round(dX + pt.x), roi.cols - 1);
+      const pxY = Math.round(dY + pt.y);
+      const pxX = Math.round(dX + pt.x);
+      
+      // Safety check for canvas boundaries
+      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
+      
       const val = roi.ucharAt(pxY, pxX);
       
-      // Draw visible white dots (255) for alignment
-      cv.circle(roi, new cv.Point(pxX, pxY), 2, new cv.Scalar(255), -1);
-      return val < 128 ? "1" : "0"; 
+      // Draw the sensor dot on the debug view
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+
+      // --- THE FIX ---
+      // If numbers are BLACK on white background: use val < 120
+      // If numbers are WHITE on black background: use val > 120
+      const isSegmentOn = val < 120 ? "1" : "0"; 
+      return isSegmentOn;
     }).join("");
 
-    return segmentMap[bits] ?? "";
+    return segmentMap[bits] ?? ""; // Returns empty string if it's just background noise
   };
+  /** */
 
   // EXTRACT READINGS
   readings.value.sys = `${getDigit(0, 0)}${getDigit(1, 0)}${getDigit(2, 0)}`;
