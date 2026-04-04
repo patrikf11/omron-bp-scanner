@@ -154,8 +154,8 @@ let mergedBoxes = [];
       // Safety check
       if (pxY >= roi.rows || pxX >= roi.cols) return "0";
 
-      // Draw small white dots in the debug view so you can see the "Bullseye"
-      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
+      // Draw small red dots in the debug view so you can see the "Bullseye"
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(0,0,255,255), -1);
 
       // If the pixel is BLACK (< 120), the segment is ON
       return roi.ucharAt(pxY, pxX) < 120 ? "1" : "0";
