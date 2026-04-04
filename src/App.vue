@@ -143,135 +143,70 @@ let mergedBoxes = [];
   const sortX = (a, b) => a.x - b.x;
   sysGroup.sort(sortX); diaGroup.sort(sortX); pulGroup.sort(sortX);
 
-  const parseDigitBox = async (rect) => {
-    const { x, y, width: dW, height: dH } = rect;
-
-    // 1. Create a tiny canvas for just this one digit
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = dW * 3;  // Scale up for better OCR
-    tempCanvas.height = dH * 3;
-    const tempCtx = tempCanvas.getContext('2d');
-
-    // 2. Draw the digit from the ROI into the tiny canvas
-    // We use the ROI which is already high-contrast
-    tempCtx.drawImage(
-      debugCanvas.value, 
-      x, y, dW, dH,           // Source coordinates in ROI
-      0, 0, tempCanvas.width, tempCanvas.height  // Destination (scaled up)
-    );
-
-    // 3. Run Tesseract on this single box
-    const { data: { text } } = await Tesseract.recognize(tempCanvas, 'eng', {
-      tessedit_char_whitelist: '0123456789',
-      tessedit_pageseg_mode: '10', // '10' treats the image as a single character
-    });
-
-    // Clean the result (Tesseract sometimes adds newlines)
-    const result = text.trim();
-  
-    // Show a little feedback in debug view
-    cv.putText(roi, result, new cv.Point(x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, new cv.Scalar(255), 1);
-    return result;
-};
-/*
+  // going back to segmented 
   const parseDigitBox = (rect) => {
-    const segMap = {
-      "1111110": "0", "0110000": "1", "1101101": "2", "1111001": "3", "0110011": "4",
-      "1011011": "5", "1011111": "6", "1110000": "7", "1111111": "8", "1111011": "9"
-    };
-    const { x, y, width: dW, height: dH } = rect;
-    //if box is narrow it can only be digit 1 no need to parse that numner
-    if (dW < dH * 0.35) {
-    return "1";
-    }
+  const { x, y, width: dW, height: dH } = rect;
+  
+  // 1. Extract the digit and ensure segments are WHITE for countNonZero
+  let digitMat = roi.roi(rect);
 
-    // Define 7 points relative to THIS specific box
-    const pts = [
-      {x: dW * 0.5,  y: dH * 0.15}, // a: top (down slightly)
-      {x: dW * 0.85, y: dH * 0.3},  // b: TR (in slightly)
-      {x: dW * 0.85, y: dH * 0.7},  // c: BR (in slightly)
-      {x: dW * 0.5,  y: dH * 0.85}, // d: bottom (up slightly)
-      {x: dW * 0.15, y: dH * 0.7},  // e: BL (in slightly)
-      {x: dW * 0.15, y: dH * 0.3},  // f: TL (in slightly)
-      {x: dW * 0.5,  y: dH * 0.5}   // g: middle (dead center)
-    ];
+  // 2. Define the 7 segments as relative boxes [x, y, width, height]
+  // These are percentages (0.0 to 1.0) of the bounding box
+  const segments = [
+    [0.2, 0.05, 0.6, 0.1],  // Top (A)
+    [0.75, 0.1, 0.2, 0.35], // Upper Right (B)
+    [0.75, 0.55, 0.2, 0.35],// Lower Right (C)
+    [0.2, 0.85, 0.6, 0.1],  // Bottom (D)
+    [0.05, 0.55, 0.2, 0.35],// Lower Left (E)
+    [0.05, 0.1, 0.2, 0.35], // Upper Left (F)
+    [0.2, 0.45, 0.6, 0.1]   // Middle (G)
+  ];
 
-    const bits = pts.map(pt => {
-      const pxX = Math.round(x + pt.x);
-      const pxY = Math.round(y + pt.y);
+  // 3. Count pixels in each segment box
+  const active = segments.map(([sX, sY, sW, sH]) => {
+    const segRect = new cv.Rect(sX * dW, sY * dH, sW * dW, sH * dH);
+    const segRoi = digitMat.roi(segRect);
     
-      if (pxY >= roi.rows || pxX >= roi.cols || pxY < 0 || pxX < 0) return "0";
+    const onPixels = cv.countNonZero(segRoi);
+    const totalPixels = segRect.width * segRect.height;
+    
+    segRoi.delete();
+    // Threshold: if > 30% of pixels in this zone are white, segment is ON
+    return (onPixels / totalPixels > 0.3) ? 1 : 0;
+  });
 
-      // --- AREA SAMPLING (5x5 grid) ---
-      let blackPixels = 0;
-      for (let ky = -2; ky <= 2; ky++) {
-        for (let kx = -2; kx <= 2; kx++) {
-          if (roi.ucharAt(pxY + ky, pxX + kx) < 140) blackPixels++;
-        }
-      }
-
-      // Draw the sensor dot for visual confirmation
-      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
-
-      // If more than 25% of the 25 pixels are black, segment is ON
-      return blackPixels > 10 ? "1" : "0";
-    }).join("");
-
-    // --- THE RETURN LOGIC ---
-    // 1. Check the standard map
-    const detected = segMap[bits];
-    if (detected) return detected;
-
-    // 2. Fallback for "1": If the box is very narrow, it's a 1 even if sensors are slightly off
-    if (rect.width < rect.height * 0.35) return "1";
-
-    // 3. Fallback for common "noisy" 1 bitmasks
-    if (bits === "0110000" || bits === "0100000" || bits === "0010000") return "1";
-
-    return "";
+  // 4. Map the bitmask to a digit
+  const mask = active.join("");
+  const lookup = {
+    "1111110": "0", "0110000": "1", "1101101": "2", "1111001": "3", "0110011": "4",
+    "1011011": "5", "1011111": "6", "1110000": "7", "1111111": "8", "1111011": "9"
   };
-*/
+
+  const result = lookup[mask] || ""; // Returns empty string if no match found
+
+  // 5. Visual Debug: Draw the result on your ROI canvas
+  cv.putText(roi, result, new cv.Point(x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, new cv.Scalar(255), 1);
+  
+  digitMat.delete();
+  return result;
+};
+
   // Add this right before the digitBoxes.map(parseDigitBox) line
   let kernel = cv.Mat.ones(2, 2, cv.CV_8U);
   cv.erode(roi, roi, kernel); 
   kernel.delete();
 
-  const parseAll = async (group) => {
-    const results = await Promise.all(group.map(box => parseDigitBox(box)));
-    return results.join("");
-  };
-
   cv.imshow(debugCanvas.value, roi);
-  try {
-    const sys = await parseAll(sysGroup);
-    const dia = await parseAll(diaGroup);
-    const pulse = await parseAll(pulGroup);
-    // Only update if we actually found something
-    readings.value = { sys, dia, pulse };
-    if (sys || dia) {
-      readings.value = { sys, dia, pulse };
-      status.value = "Scan successful!";
-    }
-  } catch (err) {
-    console.error("OCR Error:", err);
-  } finally {
-    isProcessing.value = false; // Unlock for the next frame
-    
-    // Cleanup OpenCV memory (Crucial!)
-    src.delete(); gray.delete(); roi.delete(); 
-    if(inverted) inverted.delete();
-    if(contours) contours.delete();
-    if(hierarchy) hierarchy.delete();
-  }
-    
-  //readings.value.sys = sysGroup.map(parseDigitBox).join("");
-  //readings.value.dia = diaGroup.map(parseDigitBox).join("");
-  //readings.value.pulse = pulGroup.map(parseDigitBox).join("");
-
   
+  readings.value.sys = sysGroup.map(parseDigitBox).join("");
+  readings.value.dia = diaGroup.map(parseDigitBox).join("");
+  readings.value.pulse = pulGroup.map(parseDigitBox).join("");
+
+  isProcessing.value = false; // Unlock for the next frame
+
   // 6. CLEANUP
-  //src.delete(); gray.delete(); binary.delete(); roi.delete(); 
-  //inverted.delete(); contours.delete(); hierarchy.delete(); M.delete();
+  src.delete(); gray.delete(); binary.delete(); roi.delete(); 
+  inverted.delete(); contours.delete(); hierarchy.delete(); M.delete();
 };
 
 </script>
