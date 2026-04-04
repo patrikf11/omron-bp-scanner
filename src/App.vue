@@ -149,7 +149,8 @@ let mergedBoxes = [];
   
   // 1. Extract the digit and ensure segments are WHITE for countNonZero
   let digitMat = roi.roi(rect);
-
+  cv.bitwise_not(digitMat, digitMat); 
+  
   // 2. Define the 7 segments as relative boxes [x, y, width, height]
   // These are percentages (0.0 to 1.0) of the bounding box
   const segments = [
