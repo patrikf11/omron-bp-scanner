@@ -128,9 +128,10 @@ const processFrame = async () => {
       cv.rectangle(roi, 
         new cv.Point(rect.x, rect.y), 
         new cv.Point(rect.x + rect.width, rect.y + rect.height), 
-        new cv.Scalar(255), 1);
+        new cv.Scalar(150), 2);
     }
   }
+cv.imshow(debugCanvas.value, roi); 
 
 //merge adjacent vertical boxes
 let mergedBoxes = [];
@@ -288,7 +289,7 @@ let mergedBoxes = [];
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA segm 9</h3>
+    <h3>Omron M3 OpenCV PWA segm 19</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
