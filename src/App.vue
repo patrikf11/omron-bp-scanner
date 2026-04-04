@@ -47,6 +47,7 @@ const processFrame = () => {
   const cv = window.cv;
   if (!video.value || video.value.readyState < 2) return;
 
+  // 1. Precise Image Capture
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = video.value.videoWidth;
   tempCanvas.height = video.value.videoHeight;
@@ -57,72 +58,70 @@ const processFrame = () => {
   const gray = new cv.Mat();
   const binary = new cv.Mat();
   
+  // 2. CONVERT & ENHANCE CONTRAST
   cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
   
-  // 1. STRETCH CONTRAST
+  // Stretch the grey levels to the absolute max/min
   cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
-  
-  // 2. INVERTED THRESHOLD: Numbers become WHITE (255), Background becomes BLACK (0)
-  // This solves the "All Black" issue by making the numbers the target.
-  cv.threshold(gray, binary, 100, 255, cv.THRESH_BINARY_INV);
 
-  // 3. NOISE REDUCTION: Remove tiny white speckles
-  let M = cv.Mat.ones(2, 2, cv.CV_8U);
-  cv.morphologyEx(binary, binary, cv.MORPH_OPEN, M);
+  // 3. SMOOTHING (Removes the "speckles")
+  // Blurring slightly helps join the 7-segments into solid shapes
+  let ksize = new cv.Size(3, 3);
+  cv.GaussianBlur(gray, gray, ksize, 0, 0, cv.BORDER_DEFAULT);
 
-  // 4. ROI SQUARE (Width 28%)
+  // 4. ADAPTIVE THRESHOLD (The "Speckle Killer")
+  // We use THRESH_BINARY (not INV) so digits stay BLACK on WHITE for the debug view.
+  // The '15' at the end is the 'C' constant. Increase it (e.g., 20 or 25) to make it "whiter".
+  cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 15);
+
+  // 5. SQUARE ROI (Width 28%)
   const scanSize = binary.cols * 0.28;
   const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
 
-  // 5. FIND CONTOURS
+  // 6. FIND CONTOURS (Looking for the BLACK digits)
+  // findContours works best on WHITE objects, so we temporarily INVERT for the logic
+  let inverted = new cv.Mat();
+  cv.bitwise_not(roi, inverted);
+
   let contours = new cv.MatVector();
   let hierarchy = new cv.Mat();
-  cv.findContours(roi, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+  cv.findContours(inverted, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
   let digitBoxes = [];
   for (let i = 0; i < contours.size(); ++i) {
     let rect = cv.boundingRect(contours.get(i));
-    // Filter: Look for vertical rectangles that aren't too small
+    // Filter: Omron digits are taller than they are wide.
     if (rect.height > 20 && rect.height > rect.width) {
       digitBoxes.push(rect);
-      // Draw a box around every detected digit
-      cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), [255, 255, 255, 255], 1);
+      // Draw a box around detected digits in the ROI
+      cv.rectangle(roi, new cv.Point(rect.x, rect.y), new cv.Point(rect.x + rect.width, rect.y + rect.height), [100, 100, 100, 255], 1);
     }
   }
 
-  // 6. Group by Row (SYS, DIA, PULSE)
-  // Sort by Y-coordinate
-  digitBoxes.sort((a, b) => a.y - b.y);
-
-  const parseDigit = (rect) => {
-    const { x, y, width: dW, height: dH } = rect;
-    // Sensor points (since numbers are now WHITE, we check for val > 128)
+  // 7. Sort and Parse
+  digitBoxes.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+  const results = digitBoxes.map(box => {
+    // Check segments within this box in 'roi' (Black digits on white)
+    const { x, y, width: dW, height: dH } = box;
     const pts = [
       {x: dW/2, y: dH*0.1}, {x: dW*0.9, y: dH*0.25}, {x: dW*0.9, y: dH*0.75},
       {x: dW/2, y: dH*0.9}, {x: dW*0.1, y: dH*0.75}, {x: dW*0.1, y: dH*0.25},
-      {x: dW/2, y: dH/2}
+      {x: dW/2, y: dH*0.5}
     ];
-    const bits = pts.map(pt => {
-      const pxX = Math.round(x + pt.x), pxY = Math.round(y + pt.y);
-      if (pxY >= roi.rows || pxX >= roi.cols) return "0";
-      return roi.ucharAt(pxY, pxX) > 128 ? "1" : "0"; 
-    }).join("");
+    const bits = pts.map(pt => roi.ucharAt(Math.round(y + pt.y), Math.round(x + pt.x)) < 128 ? "1" : "0").join("");
     return segmentMap[bits] ?? "";
-  };
+  }).join("");
 
-  // Logic: 1st row usually has 3 digits, 2nd has 3, 3rd has 2 or 3
-  const results = digitBoxes.map(box => parseDigit(box)).join("");
   readings.value.sys = results.substring(0, 3);
   readings.value.dia = results.substring(3, 6);
   readings.value.pulse = results.substring(6);
 
   cv.imshow(debugCanvas.value, roi);
 
-  // Cleanup
-  src.delete(); gray.delete(); binary.delete(); roi.delete(); 
-  contours.delete(); hierarchy.delete(); M.delete();
+  // 8. CLEANUP
+  src.delete(); gray.delete(); binary.delete(); roi.delete(); inverted.delete();
+  contours.delete(); hierarchy.delete();
 };
-
 //
 const processFrameOld = () => {
   const cv = window.cv;
@@ -214,7 +213,7 @@ const processFrameOld = () => {
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA dyn</h3>
+    <h3>Omron M3 OpenCV PWA dyn2</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
