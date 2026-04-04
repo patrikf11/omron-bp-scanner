@@ -80,13 +80,17 @@ const runLoop = () => {
   
   // 6. The Helper Function
   const getDigit = (col, row) => {
-    const dX = Math.round((w * 0.18) + (col * dW * 1.2)); 
-    const dY = Math.round((h * 0.12) + (row * h * 0.30));
+    const dX = Math.round((w * 0.15) + (col * dW * 1.3)); 
+    const dY = Math.round((h * 0.10) + (row * h * 0.32));
     
     const pts = [
-      {x: dW/2, y: dH*0.15}, {x: dW*0.8, y: dH*0.3}, {x: dW*0.8, y: dH*0.7},
-      {x: dW/2, y: dH*0.85}, {x: dW*0.2, y: dH*0.7}, {x: dW*0.2, y: dH*0.3},
-      {x: dW/2, y: dH/2}
+      {x: dW/2, y: dH*0.2},  // a: top (moved down)
+      {x: dW*0.75, y: dH*0.3}, // b: TR (moved left)
+      {x: dW*0.75, y: dH*0.7}, // c: BR (moved left)
+      {x: dW/2, y: dH*0.8},  // d: bottom (moved up)
+      {x: dW*0.25, y: dH*0.7}, // e: BL (moved right)
+      {x: dW*0.25, y: dH*0.3}, // f: TL (moved right)
+      {x: dW/2, y: dH/2}      // g: middle
     ];
 
     const bits = pts.map(pt => {
@@ -100,7 +104,7 @@ const runLoop = () => {
       let darkCount = 0;
       for(let i = -1; i <= 1; i++) {
         for(let j = -1; j <= 1; j++) {
-          if (roi.ucharAt(pxY + i, pxX + j) < 100) darkCount++;
+          if (roi.ucharAt(pxY + i, pxX + j) < 120) darkCount++;
         }
       }
       return darkCount >= 5 ? "1" : "0"; 
