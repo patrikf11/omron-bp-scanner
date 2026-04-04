@@ -80,6 +80,47 @@ const runLoop = () => {
   
   // 6. The Helper Function
   const getDigit = (col, row) => {
+  const dX = Math.round((w * 0.15) + (col * dW * 1.3)); 
+  const dY = Math.round((h * 0.10) + (row * h * 0.32));
+  
+  // 1. DRAW A GUIDING BOX for this digit slot
+  // This helps you see if the Omron number is actually inside the "sensor zone"
+  cv.rectangle(roi, 
+    new cv.Point(dX, dY), 
+    new cv.Point(dX + dW, dY + dH), 
+    new cv.Scalar(200), 1 // Grey border
+  );
+
+  const pts = [
+    {x: dW/2, y: dH*0.2},  {x: dW*0.8, y: dH*0.3}, {x: dW*0.8, y: dH*0.7},
+    {x: dW/2, y: dH*0.8},  {x: dW*0.2, y: dH*0.7}, {x: dW*0.2, y: dH*0.3},
+    {x: dW/2, y: dH/2}
+  ];
+
+  const bits = pts.map(pt => {
+    const pxY = Math.round(dY + pt.y);
+    const pxX = Math.round(dX + pt.x);
+    
+    if (pxY < 0 || pxY >= roi.rows || pxX < 0 || pxX >= roi.cols) return "0";
+
+    // 2. DRAW SENSOR DOTS (Visible as dark grey/black dots on white)
+    cv.circle(roi, new cv.Point(pxX, pxY), 2, new cv.Scalar(50), -1);
+
+    let darkCount = 0;
+    for(let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        // Check if pixel is dark
+        if (roi.ucharAt(pxY + i, pxX + j) < 120) darkCount++;
+      }
+    }
+    return darkCount >= 4 ? "1" : "0"; 
+  }).join("");
+
+  return segmentMap[bits] ?? "";
+};
+
+  // old
+  const getDigitOld = (col, row) => {
     const dX = Math.round((w * 0.15) + (col * dW * 1.3)); 
     const dY = Math.round((h * 0.10) + (row * h * 0.32));
     
@@ -141,7 +182,7 @@ const saveToCloud = async () => {
 
 <template>
   <div class="app">
-    <h2>Omron M3 OpenCV PWA live 5</h2>
+    <h2>Omron M3 OpenCV PWA live 6</h2>
     
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
