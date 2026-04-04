@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 
-const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY'
+const THINGSPEAK_API_KEY = 'YOUR_WRITE_API_KEY' // <--- Set your key here
 const segmentMap = {
   "1111110": 0, "0110000": 1, "1101101": 2, "1111001": 3, "0110011": 4,
   "1011011": 5, "1011111": 6, "1110000": 7, "1111111": 8, "1111011": 9
@@ -19,7 +19,7 @@ onMounted(() => {
     if (window.cv && typeof window.cv.Mat === 'function') {
       clearInterval(checkCV)
       cvReady.value = true
-      status.value = 'OpenCV Loaded. Start Live View.'
+      status.value = 'Ready. Hold 30cm from Omron.'
       startCamera()
     }
   }, 500)
@@ -27,7 +27,7 @@ onMounted(() => {
 
 const startCamera = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ 
-    video: { facingMode: 'environment' } 
+    video: { facingMode: 'environment', focusMode: 'continuous' } 
   })
   video.value.srcObject = stream
 }
@@ -43,165 +43,113 @@ const runLoop = () => {
   requestAnimationFrame(runLoop)
 }
 
-/**
- * 
- * 
- */
- const processFrame = () => {
-  const cv = window.cv;
-  if (!video.value || video.value.readyState < 2 || video.value.paused || video.value.ended) return;
+const processFrame = () => {
+  const cv = window.cv
+  if (!video.value || video.value.readyState < 2 || video.value.paused) return
 
-  // 1. Capture frame to temporary canvas
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = video.value.videoWidth;
-  tempCanvas.height = video.value.videoHeight;
-  const tempCtx = tempCanvas.getContext('2d');
-  tempCtx.drawImage(video.value, 0, 0);
+  // Capture frame
+  const tempCanvas = document.createElement('canvas')
+  tempCanvas.width = video.value.videoWidth
+  tempCanvas.height = video.value.videoHeight
+  const tempCtx = tempCanvas.getContext('2d')
+  tempCtx.drawImage(video.value, 0, 0)
 
-  // 2. Load into OpenCV
-  const src = cv.imread(tempCanvas);
-  const gray = new cv.Mat();
+  const src = cv.imread(tempCanvas)
+  const gray = new cv.Mat()
+  const binary = new cv.Mat()
   
-  // 3. Pre-process
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
-  
-  // Apply threshold directly to gray to avoid Mat mismatch errors
-  cv.threshold(gray, gray, 80, 255, cv.THRESH_BINARY);
+  // 1. Pre-process (Grayscale + Auto Threshold)
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY)
+  cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY | cv.THRESH_OTSU)
 
-  // 4. Define ROI (Center Window)
-  const w = gray.cols * 0.30;
-  const h = gray.rows * 0.40;
-  const roi = gray.roi(new cv.Rect(gray.cols * 0.35, gray.rows * 0.30, w, h));
+  // 2. 30cm ROI (45% Wide, 35% High) - This forces user to stay back
+  const w = binary.cols * 0.45
+  const h = binary.rows * 0.35
+  const roi = binary.roi(new cv.Rect(binary.cols * 0.275, binary.rows * 0.325, w, h))
 
-  // 5. Digit Dimensions
-  const dW = w * 0.22;
-  const dH = h * 0.22;
-  
-  // 6. The Helper Function
+  // 3. Row Splits (37/38/25)
+  const sysRowH = h * 0.37
+  const diaRowH = h * 0.38
+  const pulseRowH = h * 0.25
+  const dW = w * 0.20 // Digit slot width
+  const dH = h * 0.20 // Digit slot height
+
   const getDigit = (col, row) => {
-  const dX = Math.round((w * 0.10) + (col * dW * 1.1)); 
-  const dY = Math.round((h * 0.05) + (row * h * 0.32));
-  
-  // 1. DRAW A GUIDING BOX for this digit slot
-  // This helps you see if the Omron number is actually inside the "sensor zone"
-  cv.rectangle(roi, 
-    new cv.Point(dX, dY), 
-    new cv.Point(dX + dW, dY + dH), 
-    new cv.Scalar(180), 1
-  );
-  const pts = [
-    {x: dW/2, y: dH*0.1}, {x: dW*0.85, y: dH*0.25}, {x: dW*0.85, y: dH*0.75},
-    {x: dW/2, y: dH*0.9}, {x: dW*0.15, y: dH*0.75}, {x: dW*0.15, y: dH*0.25},
-    {x: dW/2, y: dH/2}
-  ];
-
-  const bits = pts.map(pt => {
-    const pxY = Math.round(dY + pt.y);
-    const pxX = Math.round(dX + pt.x);
+    const dX = Math.round((w * 0.12) + (col * dW * 1.15))
+    let dY = 0
+    if (row === 0) dY = Math.round(sysRowH * 0.1)
+    else if (row === 1) dY = Math.round(sysRowH + (diaRowH * 0.1))
+    else dY = Math.round(sysRowH + diaRowH + (pulseRowH * 0.1))
     
-    if (pxY < 0 || pxY >= roi.rows || pxX < 0 || pxX >= roi.cols) return "0";
+    // Draw sensor boxes on debug view
+    cv.rectangle(roi, new cv.Point(dX, dY), new cv.Point(dX + dW, dY + dH), new cv.Scalar(180), 1)
 
-    // 2. DRAW SENSOR DOTS (Visible as dark grey/black dots on white)
-    cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(50), -1);
-
-    let darkCount = 0;
-    for(let i = -1; i <= 1; i++) {
-      for (let j = -1; j <= 1; j++) {
-        // Check if pixel is dark
-        if (roi.ucharAt(pxY + i, pxX + j) < 110) darkCount++;
-      }
-    }
-    return darkCount >= 4 ? "1" : "0"; 
-  }).join("");
-
-  return segmentMap[bits] ?? "";
-};
-
-  // old
-  const getDigitOld = (col, row) => {
-    const dX = Math.round((w * 0.15) + (col * dW * 1.3)); 
-    const dY = Math.round((h * 0.10) + (row * h * 0.32));
-    
+    // 7 Sensors mapped for 30cm focus
     const pts = [
-      {x: dW/2, y: dH*0.2},  // a: top (moved down)
-      {x: dW*0.75, y: dH*0.3}, // b: TR (moved left)
-      {x: dW*0.75, y: dH*0.7}, // c: BR (moved left)
-      {x: dW/2, y: dH*0.8},  // d: bottom (moved up)
-      {x: dW*0.25, y: dH*0.7}, // e: BL (moved right)
-      {x: dW*0.25, y: dH*0.3}, // f: TL (moved right)
-      {x: dW/2, y: dH/2}      // g: middle
-    ];
+      {x: dW/2, y: dH*0.15}, {x: dW*0.85, y: dH*0.3}, {x: dW*0.85, y: dH*0.7},
+      {x: dW/2, y: dH*0.85}, {x: dW*0.15, y: dH*0.7}, {x: dW*0.15, y: dH*0.3},
+      {x: dW/2, y: dH/2}
+    ]
 
     const bits = pts.map(pt => {
-      const pxY = Math.round(dY + pt.y);
-      const pxX = Math.round(dX + pt.x);
+      const pxX = Math.round(dX + pt.x), pxY = Math.round(dY + pt.y)
+      if (pxY >= roi.rows || pxX >= roi.cols) return "0"
       
-      if (pxY < 0 || pxY >= roi.rows || pxX < 0 || pxX >= roi.cols) return "0";
-
-      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1);
-
-      let darkCount = 0;
-      for(let i = -1; i <= 1; i++) {
-        for(let j = -1; j <= 1; j++) {
-          if (roi.ucharAt(pxY + i, pxX + j) < 120) darkCount++;
+      // Area sample for stability (3x3 pixels)
+      let darkCount = 0
+      for(let i=-1; i<=1; i++){
+        for(let j=-1; j<=1; j++){
+          if (roi.ucharAt(pxY+i, pxX+j) < 120) darkCount++
         }
       }
-      return darkCount >= 5 ? "1" : "0"; 
-    }).join("");
+      cv.circle(roi, new cv.Point(pxX, pxY), 1, new cv.Scalar(255), -1)
+      return darkCount >= 5 ? "1" : "0"
+    }).join("")
 
-    return segmentMap[bits] ?? "";
-  };
+    return segmentMap[bits] ?? ""
+  }
 
-  // 7. Update Vue refs
-  readings.value.sys = `${getDigit(0, 0)}${getDigit(1, 0)}${getDigit(2, 0)}`;
-  readings.value.dia = `${getDigit(0, 1)}${getDigit(1, 1)}${getDigit(2, 1)}`;
-  readings.value.pulse = `${getDigit(0, 2)}${getDigit(1, 2)}${getDigit(2, 2)}`;
+  // Extract Readings
+  readings.value.sys = `${getDigit(0,0)}${getDigit(1,0)}${getDigit(2,0)}`
+  readings.value.dia = `${getDigit(0,1)}${getDigit(1,1)}${getDigit(2,1)}`
+  readings.value.pulse = `${getDigit(0,2)}${getDigit(1,2)}${getDigit(2,2)}`
 
-  // 8. Show output and Clean up memory
-  cv.imshow(debugCanvas.value, roi);
-  src.delete(); gray.delete(); roi.delete();
-};
-
-/** */
+  cv.imshow(debugCanvas.value, roi)
+  src.delete(); gray.delete(); binary.delete(); roi.delete()
+}
 
 const saveToCloud = async () => {
   status.value = "Uploading..."
   const { sys, dia, pulse } = readings.value
   //const url = `https://thingspeak.com{THINGSPEAK_API_KEY}&field1=${sys}&field2=${dia}&field3=${pulse}`
   try {
-    //await fetch(url)
-    status.value = "Saved to ThingSpeak!"
-    if (navigator.vibrate) navigator.vibrate(200)
-  } catch {
-    status.value = "Upload failed."
-  }
+    //const res = await fetch(url)
+    if(res.ok) {
+      status.value = "Saved!"
+      if (navigator.vibrate) navigator.vibrate(200)
+    }
+  } catch { status.value = "Error!" }
 }
 </script>
 
 <template>
   <div class="app">
-    <h2>Omron M3 OpenCV PWA live 6</h2>
-    
+    <h3>Omron M3 OpenCV PWA</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
     </div>
-
     <div class="ui">
       <p class="status">{{ status }}</p>
-      
       <button @click="toggleLive" :disabled="!cvReady" :class="isLive ? 'btn-stop' : 'btn-start'">
-        {{ isLive ? 'STOP LIVE VIEW' : 'START LIVE ALIGNMENT' }}
+        {{ isLive ? 'STOP ALIGNMENT' : 'START LIVE VIEW' }}
       </button>
-
       <div v-if="readings.sys" class="results">
-        <div class="reading-row">SYS: {{ readings.sys }} | DIA: {{ readings.dia }} | PUL: {{ readings.pulse }}</div>
+        <div class="row">SYS: {{ readings.sys }} | DIA: {{ readings.dia }} | PUL: {{ readings.pulse }}</div>
         <button @click="saveToCloud" class="btn-cloud">SEND TO THINGSPEAK</button>
       </div>
-
-      <div class="debug-area">
-        <p>Real-time Dot Check:</p>
+      <div class="debug">
+        <p>Debug (37/38/25 Split):</p>
         <canvas ref="debugCanvas"></canvas>
       </div>
     </div>
@@ -209,23 +157,21 @@ const saveToCloud = async () => {
 </template>
 
 <style scoped>
-.app { font-family: sans-serif; text-align: center; padding: 10px; max-width: 500px; margin: auto; }
-.video-container { position: relative; border-radius: 15px; overflow: hidden; background: #000; }
+.app { font-family: sans-serif; text-align: center; max-width: 450px; margin: auto; padding: 10px; }
+.video-container { position: relative; border-radius: 12px; overflow: hidden; background: #000; }
 video { width: 100%; display: block; }
 .scan-overlay { 
-  position: absolute; 
-  top: 30%; bottom: 30%; 
-  left: 35%; right: 35%; 
+  position: absolute; top: 32.5%; bottom: 32.5%; left: 27.5%; right: 27.5%; 
   border: 2px solid #00ff00; pointer-events: none;
-  box-shadow: 0 0 0 1000px rgba(0,0,0,0.5);
+  box-shadow: 0 0 0 1000px rgba(0,0,0,0.6);
 }
 .ui { margin-top: 10px; }
-button { width: 100%; padding: 15px; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; transition: 0.3s; }
+button { width: 100%; padding: 14px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
 .btn-start { background: #3b82f6; color: white; }
 .btn-stop { background: #ef4444; color: white; }
-.btn-cloud { background: #10b981; color: white; margin-top: 10px; }
-.results { margin-top: 15px; padding: 15px; background: #f3f4f6; border-radius: 10px; border: 1px solid #ddd; }
-.reading-row { font-size: 1.2rem; font-weight: bold; margin-bottom: 10px; }
-canvas { width: 100%; margin-top: 10px; border: 1px solid #ccc; background: #000; border-radius: 8px; }
-.status { color: #3b82f6; font-size: 0.9rem; margin-bottom: 10px; min-height: 1.2rem; }
+.btn-cloud { background: #10b981; color: white; margin-top: 8px; }
+.results { margin-top: 12px; padding: 12px; background: #f3f4f6; border-radius: 8px; }
+.row { font-size: 1.2rem; font-weight: bold; margin-bottom: 8px; }
+canvas { width: 100%; margin-top: 8px; border: 1px solid #ccc; background: #000; border-radius: 6px; }
+.status { color: #3b82f6; font-size: 0.9rem; min-height: 1.2rem; }
 </style>
