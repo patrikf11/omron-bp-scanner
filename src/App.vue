@@ -104,6 +104,10 @@ const processFrame = async () => {
   // find boxes
   let workMat = new cv.Mat();
   cv.bitwise_not(roi, workMat);
+  
+  let black = new cv.Scalar(0);
+  cv.rectangle(workMat, new cv.Point(0,0), new cv.Point(workMat.cols, workMat.rows), black, 2);
+
   let M = cv.Mat.ones(3, 3, cv.CV_8U); 
   cv.dilate(workMat, workMat, M);
 
@@ -283,7 +287,7 @@ let mergedBoxes = [];
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA segm 8</h3>
+    <h3>Omron M3 OpenCV PWA segm 9</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
