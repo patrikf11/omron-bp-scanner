@@ -16,14 +16,18 @@ const cvReady = ref(false)
 
 onMounted(() => {
   const checkCV = setInterval(() => {
-    if (window.cv && window.cv.Mat) {
-      clearInterval(checkCV)
-      cvReady.value = true
-      status.value = 'Align screen in green box'
-      startCamera()
+    // Check for both the global variable AND the internal Mat constructor
+    if (window.cv && typeof window.cv.Mat === 'function') {
+      clearInterval(checkCV);
+      cvReady.value = true;
+      status.value = 'OpenCV Loaded! Ready to scan.';
+      startCamera();
+    } else {
+      status.value = 'Downloading OpenCV (10MB)...';
     }
-  }, 100)
-})
+  }, 500); // Check every half second
+});
+
 
 const startCamera = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ 
