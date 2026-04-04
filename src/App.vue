@@ -283,7 +283,7 @@ let mergedBoxes = [];
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA segm 7</h3>
+    <h3>Omron M3 OpenCV PWA segm 8</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
