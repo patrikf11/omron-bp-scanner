@@ -81,6 +81,74 @@ const prefilter = (src, gray, binary) => {
   );
 };
 
+const findDigitBoxes = (roi, scanSize) => {
+  const cv = window.cv;
+  let rawBoxes = [];
+
+  // 1. Prepare WorkMats
+  let workMat = new cv.Mat();
+  let M = cv.Mat.ones(3, 3, cv.CV_8U);
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
+
+  // 2. Setup WorkMat (Invert + Border + Dilate)
+  cv.bitwise_not(roi, workMat);
+  cv.rectangle(workMat, new cv.Point(0,0), new cv.Point(workMat.cols, workMat.rows), new cv.Scalar(0), 5);
+  cv.dilate(workMat, workMat, M);
+  
+  // 3. Find Initial Blobs
+  cv.findContours(workMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  // 4. Initial Filter (Tiered for Large/Small/Thin)
+  for (let i = 0; i < contours.size(); ++i) {
+    const rect = cv.boundingRect(contours.get(i));
+    const relH = rect.height / scanSize;
+    const aspect = rect.height / rect.width;
+
+    const isLarge = (relH > 0.22 && relH < 0.50 && rect.width > 8);
+    const isSmall = (relH > 0.08 && relH < 0.22 && rect.width > 4);
+    const isThin = (aspect > 2.2 && relH > 0.08);
+
+    if (isLarge || isSmall || isThin) {
+      rawBoxes.push(rect);
+    }
+  }
+
+  // 5. MERGE VERTICAL GAPS (The "Broken Digit" Fix)
+  let mergedBoxes = [];
+  rawBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find vertical neighbors
+
+  for (let i = 0; i < rawBoxes.length; i++) {
+    let current = rawBoxes[i];
+    let merged = false;
+
+    for (let j = 0; j < mergedBoxes.length; j++) {
+      let prev = mergedBoxes[j];
+      
+      // If boxes share X-center and are vertically close
+      const centerCurrent = current.x + (current.width / 2);
+      const centerPrev = prev.x + (prev.width / 2);
+      const horizontalAlign = Math.abs(centerCurrent - centerPrev) < (current.width * 0.4);
+      const verticalGap = Math.abs(current.y - (prev.y + prev.height));
+
+      if (horizontalAlign && verticalGap < (current.height * 1.2)) {
+        prev.y = Math.min(prev.y, current.y);
+        prev.height = Math.max(prev.y + prev.height, current.y + current.height) - prev.y;
+        prev.width = Math.max(prev.width, current.width);
+        merged = true;
+        break;
+      }
+    }
+    if (!merged) mergedBoxes.push(current);
+  }
+
+  // 6. Final Cleanup
+  workMat.delete(); M.delete(); contours.delete(); hierarchy.delete();
+
+  return mergedBoxes;
+};
+
+
 const isProcessing = ref(false);
 const processFrame = async () => {
   const cv = window.cv;
@@ -101,7 +169,19 @@ const processFrame = async () => {
   const scanSize = binary.cols * 0.28;
   const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
 
-  // find boxes
+  const digitBoxes = findDigitBoxes(roi,scanSize);
+  
+  // invert roi
+  cv.bitwise_not(roi, roi);
+
+  digitBoxes.forEach(box => {
+    cv.rectangle(roi, 
+      new cv.Point(box.x, box.y), 
+      new cv.Point(box.x + box.width, box.y + box.height), 
+      new cv.Scalar(150), 1);
+  });
+
+  /* find boxes
   let workMat = new cv.Mat();
   cv.bitwise_not(roi, workMat);
   
@@ -131,7 +211,7 @@ const processFrame = async () => {
         new cv.Scalar(150), 2);
     }
   }
-cv.imshow(debugCanvas.value, roi); 
+//cv.imshow(debugCanvas.value, roi); 
 
 //merge adjacent vertical boxes
 let mergedBoxes = [];
@@ -161,7 +241,7 @@ let mergedBoxes = [];
   }
   // Now use mergedBoxes for the rest of your row grouping
   digitBoxes = mergedBoxes;
- 
+  */
 
   // 5. ROW GROUPING (SYS/DIA/PULSE)
   // Group digits into 3 rows based on their Y coordinate
@@ -289,7 +369,7 @@ let mergedBoxes = [];
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA segm 19</h3>
+    <h3>Omron M3 OpenCV PWA segm 21</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
