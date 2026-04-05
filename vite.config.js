@@ -1,6 +1,8 @@
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa' 
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -26,6 +28,13 @@ export default defineConfig({
           }
         ]
       }
-    })
+    }),
+    basicSsl(),
   ],
+  resolve: {
+    alias: {
+      // This maps '@' directly to your 'src' folder
+      '@': fileURLToPath(new URL('./src', import.meta.url))
+    }
+  },
 })

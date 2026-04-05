@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import * as ScannerService from '@/services/omronScanner';
 
 const video = ref(null)
 const debugCanvas = ref(null)
@@ -31,26 +32,15 @@ const toggleLive = () => {
   if (isLive.value) runLoop()
 }
 
-const runLoop = async () => {
-  if (!isLive.value) return;
-
-  // 1. Only run if we aren't already busy with a scan
-  if (!isProcessing.value) {
-    await processFrame(); 
-  }
-
-  // 2. Wait 500ms before trying the next scan
-  // This is fast enough to feel "live" but slow enough to be stable
-  setTimeout(runLoop, 500); 
-};
-/*
 const runLoop = () => {
-  if (!isLive.value) return
-  processFrame()
-  requestAnimationFrame(runLoop)
-}
-*/
+  if (!isLive.value ) return;
+  if (!isProcessing.value) {
+    processFrame(); 
+  }
+  setTimeout(runLoop, 250); 
+};
 
+// opencv can do this but for some reason it didnt work on my iphone
 const tempCanvas = document.createElement('canvas');
 const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
 const captureToCanvas = () => {
@@ -61,96 +51,8 @@ const captureToCanvas = () => {
   return tempCanvas;
 }
 
-const prefilter = (src, gray, binary) => {
-  const cv = window.cv;
-  // 1. Grayscale
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  // 2. Normalize to handle glare on the Omron screen
-  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
-  cv.medianBlur(gray, gray, 3);
-  // 3. Adaptive Threshold (Strict for LCD segments)
-  // 15 is the block size, 15 is the constant subtracted from the mean
-  cv.adaptiveThreshold(
-    gray, 
-    binary, 
-    255, 
-    cv.ADAPTIVE_THRESH_GAUSSIAN_C, 
-    cv.THRESH_BINARY, 
-    15, 
-    15
-  );
-};
-
-const findDigitBoxes = (roi, scanSize) => {
-  const cv = window.cv;
-  let rawBoxes = [];
-
-  // 1. Prepare WorkMats
-  let workMat = new cv.Mat();
-  let M = cv.Mat.ones(3, 3, cv.CV_8U);
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
-
-  // 2. Setup WorkMat (Invert + Border + Dilate)
-  cv.bitwise_not(roi, workMat);
-  cv.rectangle(workMat, new cv.Point(0,0), new cv.Point(workMat.cols, workMat.rows), new cv.Scalar(0), 5);
-  cv.dilate(workMat, workMat, M);
-  
-  // 3. Find Initial Blobs
-  cv.findContours(workMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-  // 4. Initial Filter (Tiered for Large/Small/Thin)
-  for (let i = 0; i < contours.size(); ++i) {
-    const rect = cv.boundingRect(contours.get(i));
-    const relH = rect.height / scanSize;
-    const aspect = rect.height / rect.width;
-
-    const isLarge = (relH > 0.22 && relH < 0.50 && rect.width > 8);
-    const isSmall = (relH > 0.08 && relH < 0.22 && rect.width > 4);
-    const isThin = (aspect > 2.2 && relH > 0.08);
-
-    if (isLarge || isSmall || isThin) {
-      rawBoxes.push(rect);
-    }
-  }
-
-  // 5. MERGE VERTICAL GAPS (The "Broken Digit" Fix)
-  let mergedBoxes = [];
-  rawBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find vertical neighbors
-
-  for (let i = 0; i < rawBoxes.length; i++) {
-    let current = rawBoxes[i];
-    let merged = false;
-
-    for (let j = 0; j < mergedBoxes.length; j++) {
-      let prev = mergedBoxes[j];
-      
-      // If boxes share X-center and are vertically close
-      const centerCurrent = current.x + (current.width / 2);
-      const centerPrev = prev.x + (prev.width / 2);
-      const horizontalAlign = Math.abs(centerCurrent - centerPrev) < (current.width * 0.4);
-      const verticalGap = Math.abs(current.y - (prev.y + prev.height));
-
-      if (horizontalAlign && verticalGap < (current.height * 1.2)) {
-        prev.y = Math.min(prev.y, current.y);
-        prev.height = Math.max(prev.y + prev.height, current.y + current.height) - prev.y;
-        prev.width = Math.max(prev.width, current.width);
-        merged = true;
-        break;
-      }
-    }
-    if (!merged) mergedBoxes.push(current);
-  }
-
-  // 6. Final Cleanup
-  workMat.delete(); M.delete(); contours.delete(); hierarchy.delete();
-
-  return mergedBoxes;
-};
-
-
 const isProcessing = ref(false);
-const processFrame = async () => {
+const processFrame = () => {
   const cv = window.cv;
   if (!cv || isProcessing.value) return;
 
@@ -159,217 +61,27 @@ const processFrame = async () => {
 
   isProcessing.value = true;
 
-  // Start OpenCV
-  const src = cv.imread(canvas);  
-  const gray = new cv.Mat();
-  const binary = new cv.Mat();
-   
-  prefilter(src, gray, binary);
-
-  const scanSize = binary.cols * 0.28;
-  const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
-
-  const digitBoxes = findDigitBoxes(roi,scanSize);
+  const { roi, digitBoxes, scanSize } = ScannerService.prepareScanner(cv, canvas);
+  const results = ScannerService.getReadings(cv, roi, digitBoxes, scanSize);
   
-  // invert roi
-  cv.bitwise_not(roi, roi);
-
-  digitBoxes.forEach(box => {
-    cv.rectangle(roi, 
-      new cv.Point(box.x, box.y), 
-      new cv.Point(box.x + box.width, box.y + box.height), 
-      new cv.Scalar(150), 1);
-  });
-
-  /* find boxes
-  let workMat = new cv.Mat();
-  cv.bitwise_not(roi, workMat);
-  
-  let black = new cv.Scalar(0);
-  cv.rectangle(workMat, new cv.Point(0,0), new cv.Point(workMat.cols, workMat.rows), black, 2);
-
-  let M = cv.Mat.ones(3, 3, cv.CV_8U); 
-  cv.dilate(workMat, workMat, M);
-
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
-  cv.findContours(workMat, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  
-  cv.bitwise_not(roi, roi);
-  
-  let digitBoxes = [];
-  for (let i = 0; i < contours.size(); ++i) {
-    alert(i);
-    let rect = cv.boundingRect(contours.get(i));
-    // 4. RELAXED FILTER: Accept thinner (the "1") and smaller digits
-    //if (rect.height > 15 && rect.height < (scanSize * 0.5)) {
-      if (rect.height > 5 && rect.width > 2 ) {
-      digitBoxes.push(rect);
-      cv.rectangle(roi, 
-        new cv.Point(rect.x, rect.y), 
-        new cv.Point(rect.x + rect.width, rect.y + rect.height), 
-        new cv.Scalar(150), 2);
-    }
+  if (results.sys || results.dia) {
+    readings.value = results;
+    status.value = "Scanning...";
   }
-//cv.imshow(debugCanvas.value, roi); 
 
-//merge adjacent vertical boxes
-let mergedBoxes = [];
-  digitBoxes.sort((a, b) => a.x - b.x); // Sort left-to-right to find neighbors
-
-  for (let i = 0; i < digitBoxes.length; i++) {
-    let current = digitBoxes[i];
-    let merged = false;
-
-    for (let j = 0; j < mergedBoxes.length; j++) {
-      let prev = mergedBoxes[j];
-      
-      // Check if they are horizontally aligned (same X) and vertically close
-      const horizontalOverlap = Math.abs(current.x - prev.x) < (scanSize * 0.05);
-      const verticalGap = current.y - (prev.y + prev.height);
-
-      if (horizontalOverlap && verticalGap < (current.height * 1.5)) {
-        // Merge the two boxes into one tall one
-        prev.y = Math.min(prev.y, current.y);
-        prev.height = Math.max(prev.y + prev.height, current.y + current.height) - prev.y;
-        prev.width = Math.max(prev.width, current.width);
-        merged = true;
-        break;
-      }
-    }
-    if (!merged) mergedBoxes.push(current);
-  }
-  // Now use mergedBoxes for the rest of your row grouping
-  digitBoxes = mergedBoxes;
-  */
-
-  // 5. ROW GROUPING (SYS/DIA/PULSE)
-  // Group digits into 3 rows based on their Y coordinate
-  const rowThreshold = scanSize * 0.25; 
-  let sysGroup = [], diaGroup = [], pulGroup = [];
-
-  digitBoxes.forEach(box => {
-    if (box.y < rowThreshold) sysGroup.push(box);
-    else if (box.y < rowThreshold * 2.2) diaGroup.push(box);
-    else pulGroup.push(box);
-  });
-
-  // Sort each row Left-to-Right
-  const sortX = (a, b) => a.x - b.x;
-  sysGroup.sort(sortX); diaGroup.sort(sortX); pulGroup.sort(sortX);
-
-  // going back to segmented 
-  const parseDigitBox = (rect) => {
-  const { x, y, width: dW, height: dH } = rect;
-  
-  // 1. Extract the digit and ensure segments are WHITE for countNonZero
-  let digitMat = roi.roi(rect);
-
-  // 2. Define the 7 segments as relative boxes [x, y, width, height]
-  // These are percentages (0.0 to 1.0) of the bounding box
-  const segments = [
-    [0.2, 0.05, 0.6, 0.1],  // Top (A)
-    [0.75, 0.1, 0.2, 0.35], // Upper Right (B)
-    [0.75, 0.55, 0.2, 0.35],// Lower Right (C)
-    [0.2, 0.85, 0.6, 0.1],  // Bottom (D)
-    [0.05, 0.55, 0.2, 0.35],// Lower Left (E)
-    [0.05, 0.1, 0.2, 0.35], // Upper Left (F)
-    [0.2, 0.45, 0.6, 0.1]   // Middle (G)
-  ];
-
-  // 3. Count pixels in each segment box
-  const active = segments.map(([sX, sY, sW, sH]) => {
-    const segRect = new cv.Rect(sX * dW, sY * dH, sW * dW, sH * dH);
-    const segRoi = digitMat.roi(segRect);
-    
-    const onPixels = cv.countNonZero(segRoi);
-    const totalPixels = segRect.width * segRect.height;
-    
-    segRoi.delete();
-    // Threshold: if > 30% of pixels in this zone are white, segment is ON
-    return (onPixels / totalPixels > 0.3) ? 1 : 0;
-  });
-
-  // 4. Map the bitmask to a digit
-  const mask = active.join("");
-  const lookup = {
-    "1111110": "0", "0110000": "1", "1101101": "2", "1111001": "3", "0110011": "4",
-    "1011011": "5", "1011111": "6", "1110000": "7", "1111111": "8", "1111011": "9"
-  };
-
-  const result = lookup[mask] || ""; // Returns empty string if no match found
-
-  // 5. Visual Debug: Draw the result on your ROI canvas
-  cv.putText(roi, result, new cv.Point(x, y - 5), cv.FONT_HERSHEY_SIMPLEX, 0.5, new cv.Scalar(255), 1);
-  
-  digitMat.delete();
-  return result;
-};
-
-  // Add this right before the digitBoxes.map(parseDigitBox) line
-  let kernel = cv.Mat.ones(2, 2, cv.CV_8U);
-  cv.erode(roi, roi, kernel); 
-  kernel.delete();
-
+  //debug
   cv.imshow(debugCanvas.value, roi);
-  
-  readings.value.sys = sysGroup.map(parseDigitBox).join("");
-  readings.value.dia = diaGroup.map(parseDigitBox).join("");
-  readings.value.pulse = pulGroup.map(parseDigitBox).join("");
-
-  isProcessing.value = false; // Unlock for the next frame
 
   // 6. CLEANUP
-  src.delete(); gray.delete(); binary.delete(); roi.delete(); 
-  inverted.delete(); contours.delete(); hierarchy.delete(); M.delete();
+  roi.delete(); 
+  isProcessing.value = false; 
 };
-
-
- /*
-  const cv = window.cv;
-  if (!video.value || video.value.readyState < 2) return;
-
-  isProcessing.value = true;
-  // 1. Precise Image Capture
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = video.value.videoWidth;
-  tempCanvas.height = video.value.videoHeight;
-  const tempCtx = tempCanvas.getContext('2d');
-  tempCtx.drawImage(video.value, 0, 0);
-
-  const src = cv.imread(tempCanvas);
-  const gray = new cv.Mat();
-  const binary = new cv.Mat();
-   
-  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-  cv.normalize(gray, gray, 0, 255, cv.NORM_MINMAX);
-
-  // 1. ADAPTIVE THRESHOLD (Keep it strict)
-  cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 15);
-
-  const scanSize = binary.cols * 0.28;
-  const roi = binary.roi(new cv.Rect((binary.cols - scanSize)/2, (binary.rows - scanSize)/2, scanSize, scanSize));
-  cv.bitwise_not(roi, roi);
-
-  // 2. DILATION: Fatten the black segments so they touch
-  // This turns a "broken" 8 into a solid 8
-  let M = cv.Mat.ones(2, 2, cv.CV_8U);
-  let inverted = new cv.Mat();
-  cv.bitwise_not(roi, inverted); // Invert so digits are white for dilation
-  cv.dilate(inverted, inverted, M);
-
-  // 3. FIND CONTOURS on the "fattened" digits
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
-  cv.findContours(inverted, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-  */
- 
 </script>
 
 
 <template>
   <div class="app">
-    <h3>Omron M3 OpenCV PWA segm 21</h3>
+    <h3>Omron M3 OpenCV PWA</h3>
     <div class="video-container">
       <video ref="video" autoplay playsinline></video>
       <div class="scan-overlay"></div>
@@ -401,10 +113,8 @@ video { width: 100%; display: block; }
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%); /* Perfectly centers the square */
-  
   width: 28vw;             /* Use 50% of the screen width */
   aspect-ratio: 1 / 1;     /* Force it to be a square */
-  
   border: 2px solid #00ff00; 
   box-shadow: 0 0 0 1000px rgba(0,0,0,0.6);
   pointer-events: none;
